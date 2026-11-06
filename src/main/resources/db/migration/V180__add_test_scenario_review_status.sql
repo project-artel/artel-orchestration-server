@@ -9,5 +9,8 @@ ALTER TABLE test_case ADD COLUMN review_requested_by BIGINT;
 -- 승인된 시나리오를 고친 것이면 true. 이전 본문이 남지 않아 거절(삭제)할 수 없다.
 ALTER TABLE test_scenario ADD COLUMN review_edits_approved BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- 승인하면 걷어낼 시나리오 번호(합치기). 승인 전에는 원본을 지우지 않는다.
+ALTER TABLE test_scenario ADD COLUMN review_absorbs JSONB;
+
 CREATE INDEX idx_test_scenario_review_queue ON test_scenario (project_id, review_requested_by) WHERE review_status = 'DRAFT';
 CREATE INDEX idx_test_case_review_queue ON test_case (project_id, review_requested_by) WHERE review_status = 'DRAFT';

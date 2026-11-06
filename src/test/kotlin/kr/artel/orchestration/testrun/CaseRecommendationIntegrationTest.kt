@@ -179,6 +179,46 @@ class CaseRecommendationIntegrationTest {
         assertThat(objectMapper.readTree(get(client, "/api/projects/$projectId/test-cases/$caseId", token))["arrivesAt"].asText()).isEqualTo("숲")
     }
 
+    @Test
+    fun `승인 전 추천 TC 는 승인된 시나리오에 잇지 않고 승인할 때 잇는다`(): Unit = runBlocking {
+        val client = WebClient.create("http://localhost:$port")
+        val (projectId, runId, token) = world("review-link")
+        fun stepsOf(id: Long) = runBlocking { objectMapper.readTree(scenarioRepository.findById(id)!!.steps.asString()) }
+        fun send(uri: String, body: String): Pair<Int, String> =
+            client.post().uri(uri).contentType(org.springframework.http.MediaType.APPLICATION_JSON).cookie("artel_access_token", token).bodyValue(body)
+                .exchangeToMono { r -> r.bodyToMono(String::class.java).defaultIfEmpty("").map { r.statusCode().value() to it } }.block()!!
+        val steps = io.r2dbc.postgresql.codec.Json.of("""[{"action":"광장 오른쪽 길로 간다","step_source":"HUMAN","step_kind":"ACTION"}]""")
+        val approved = scenarioRepository.save(
+            kr.artel.orchestration.testscenario.entity.TestScenarioEntity(projectId = projectId, title = "승인된 숲", steps = steps),
+        )
+        val pending = scenarioRepository.save(
+            kr.artel.orchestration.testscenario.entity.TestScenarioEntity(projectId = projectId, title = "대기 숲", steps = steps, reviewStatus = "DRAFT"),
+        )
+        runScenarioRepository.save(kr.artel.orchestration.testrun.entity.TestRunScenarioEntity(testRunId = runId, testScenarioId = approved.id!!, position = 0))
+        runScenarioRepository.save(kr.artel.orchestration.testrun.entity.TestRunScenarioEntity(testRunId = runId, testScenarioId = pending.id!!, position = 1))
+        val rec = recommendations.recommendSceneMove(projectId, runId, "광장", "숲", "광장 오른쪽 길로 간다")!!
+
+        send("/api/projects/$projectId/test-runs/$runId/case-recommendations/save", """{"ids":["${rec.id}"],"draft":true}""")
+
+        val caseId = objectMapper.readTree(get(client, "/api/projects/$projectId/test-runs/$runId/case-recommendations", token))[0]["testCaseId"].asLong()
+        assertThat(stepsOf(approved.id!!)[0].path("case_id").isNumber).isFalse()
+        assertThat(stepsOf(pending.id!!)[0]["case_id"].asLong()).isEqualTo(caseId)
+
+        val item = objectMapper.readTree(get(client, "/api/projects/$projectId/test-cases/review-queue", token)).single()
+        fun review(decision: String) = send(
+            "/api/projects/$projectId/test-cases/$caseId/review",
+            """{"decision":"$decision","expectedUpdatedAt":"${item["updatedAt"].asText()}"}""",
+        )
+        // 승인 대기 시나리오가 쓰는 Test Case 를 지우면 참조가 끊어진다.
+        val refused = review("REJECT")
+        assertThat(refused.first).isEqualTo(409)
+        assertThat(refused.second).contains("review_not_rejectable")
+
+        assertThat(review("APPROVE").first).isEqualTo(204)
+        assertThat(stepsOf(approved.id!!)[0]["case_id"].asLong()).isEqualTo(caseId)
+        assertThat(stepsOf(approved.id!!)[0]["step_source"].asText()).isEqualTo("CASE")
+    }
+
     /** draft 를 버리면 그 draft 의 스텝에서 나온 추천도 버린다. 남으면 쓰는 곳 없는 TC 를 저장할지 또 정해야 한다. */
     @Test
     fun `draft 를 버리면 그 draft 만 쓰던 추천도 버린다`(): Unit = runBlocking {

@@ -50,6 +50,7 @@ class TestRunChatService(
     private val drafts: AuthoringDraftStore,
     private val absorbService: ScenarioAbsorbService,
     private val runLocks: RunAuthoringLocks,
+    private val reviewAbsorbs: kr.artel.orchestration.testscenario.service.ScenarioReviewService,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -177,7 +178,10 @@ class TestRunChatService(
             // 합치기는 **저장된 최종본**으로 센다. draft 본문으로 세면 코드가 손댄 뒤의 실제 본문과 달라
             // 실제로는 빠진 케이스를 있다고 세고 원본을 지울 수 있다.
             val keeper = outcome.saved.firstOrNull()
-            if (keeper != null && item.absorbedScenarioIds.isNotEmpty()) {
+            if (keeper != null && item.absorbedScenarioIds.isNotEmpty() && pendingReview) {
+                // 승인 전에 걷어내면 거절했을 때 원본과 합친 쪽이 모두 사라진다. 승인할 때 걷어낸다.
+                reviewAbsorbs.record(keeper.scenarioId, item.absorbedScenarioIds)
+            } else if (keeper != null && item.absorbedScenarioIds.isNotEmpty()) {
                 val result = absorbService.absorb(
                     runId, keeper.scenarioId, outcome.checked.firstOrNull() ?: item.toResult(), item.absorbedScenarioIds,
                 )

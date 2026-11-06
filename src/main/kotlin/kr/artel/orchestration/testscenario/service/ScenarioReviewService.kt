@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
@@ -43,6 +44,7 @@ class ScenarioReviewService(
     private val qaTries: QaTryRepository,
     private val transactionalOperator: TransactionalOperator,
     private val projectChanges: ProjectChangeStreamManager,
+    private val absorbService: ScenarioAbsorbService,
 ) {
     suspend fun queue(projectId: Long, appUserId: Long): List<ScenarioReviewItem> {
         if (!accessService.isMember(projectId, appUserId)) throw NotFoundException()
@@ -77,6 +79,12 @@ class ScenarioReviewService(
         }
     }
 
+    /** 승인하면 걷어낼 시나리오를 적어 둔다. */
+    suspend fun record(scenarioId: Long, absorbedIds: List<Long>) {
+        val scenario = scenarios.findById(scenarioId) ?: return
+        scenarios.save(scenario.copy(reviewAbsorbs = Json.of(objectMapper.writeValueAsString(absorbedIds))))
+    }
+
     suspend fun decide(projectId: Long, scenarioId: Long, appUserId: Long, request: ReviewDecisionRequest) {
         if (!accessService.isMember(projectId, appUserId)) throw NotFoundException()
         val scenario = scenarios.findById(scenarioId)?.takeIf { it.projectId == projectId } ?: throw NotFoundException()
@@ -91,6 +99,7 @@ class ScenarioReviewService(
             ReviewDecision.REJECT -> reject(scenarioId, projectId, request)
         }
         if (changed == 0) throw refusal(projectId, scenarioId, request)
+        if (request.decision == ReviewDecision.APPROVE) absorbService.absorbOnApproval(scenario)
         projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
     }
 

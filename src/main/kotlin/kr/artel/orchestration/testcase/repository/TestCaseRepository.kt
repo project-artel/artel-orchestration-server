@@ -204,8 +204,8 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     suspend fun approveDraft(id: Long, projectId: Long, expectedUpdatedAt: java.time.Instant): Int
 
     /**
-     * 사람이 본 내용 그대로이고 승인을 요청받은 것일 때만 지운다. 승인했다가 되돌린 Test Case 는 요청자가 비어 있고
-     * 시나리오가 쓰고 있을 수 있어 지우지 않는다. 바뀐 수는 0 또는 1 이다.
+     * 사람이 본 내용 그대로이고 승인을 요청받은 것일 때만 지운다. 승인했다가 되돌린 Test Case 는 요청자가 비어 있어
+     * 지우지 않는다. 승인 대기 시나리오가 추천으로 쓰는 Test Case 도 참조가 끊어지므로 지우지 않는다. 바뀐 수는 0 또는 1 이다.
      */
     @Modifying
     @Query(
@@ -213,6 +213,10 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         DELETE FROM test_case
          WHERE id = :id AND project_id = :projectId AND review_status = 'DRAFT' AND updated_at = :expectedUpdatedAt
            AND review_requested_by IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
+              WHERE s.project_id = :projectId AND e->>'case_id' = CAST(:id AS text)
+           )
         """
     )
     suspend fun rejectDraft(id: Long, projectId: Long, expectedUpdatedAt: java.time.Instant): Int

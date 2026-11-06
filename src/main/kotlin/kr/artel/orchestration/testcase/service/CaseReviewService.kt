@@ -12,6 +12,7 @@ import kr.artel.orchestration.testcase.dto.ReviewDecision
 import kr.artel.orchestration.testcase.dto.ReviewDecisionRequest
 import kr.artel.orchestration.testcase.entity.ReviewStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testscenario.service.CaseRecommendationService
 import org.springframework.stereotype.Service
 
 /**
@@ -25,6 +26,7 @@ class CaseReviewService(
     private val projectAccess: ProjectAccessService,
     private val testCases: TestCaseRepository,
     private val projectChanges: ProjectChangeStreamManager,
+    private val recommendations: CaseRecommendationService,
 ) {
     suspend fun queue(projectId: Long, userId: Long): List<CaseReviewItem> {
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
@@ -51,6 +53,7 @@ class CaseReviewService(
             ReviewDecision.REJECT -> testCases.rejectDraft(caseId, projectId, request.expectedUpdatedAt)
         }
         if (changed == 0) throw refusal(projectId, caseId, request)
+        if (request.decision == ReviewDecision.APPROVE) recommendations.linkApproved(caseId, userId)
         projectChanges.notify(projectId, ProjectChangeTopic.TEST_CASES)
     }
 
@@ -61,7 +64,7 @@ class CaseReviewService(
                 ConflictException("이미 처리된 Test Case 입니다.", REVIEW_SETTLED)
             current.updatedAt != request.expectedUpdatedAt ->
                 ConflictException("내용이 바뀌었습니다. 다시 확인해 주세요.", REVIEW_STALE)
-            else -> ConflictException("이 Test Case 는 거절할 수 없습니다.", REVIEW_NOT_REJECTABLE)
+            else -> ConflictException("승인을 요청받은 것이 아니거나 시나리오가 쓰고 있어 거절할 수 없습니다.", REVIEW_NOT_REJECTABLE)
         }
     }
 

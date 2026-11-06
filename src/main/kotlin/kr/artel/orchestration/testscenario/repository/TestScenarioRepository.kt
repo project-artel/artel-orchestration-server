@@ -26,7 +26,8 @@ interface TestScenarioRepository : CoroutineCrudRepository<TestScenarioEntity, L
     @Query(
         """
         UPDATE test_scenario
-           SET review_status = 'READY', review_requested_by = NULL, review_edits_approved = FALSE, updated_at = now()
+           SET review_status = 'READY', review_requested_by = NULL, review_edits_approved = FALSE,
+               review_absorbs = NULL, updated_at = now()
          WHERE id = :id AND project_id = :projectId AND review_status = 'DRAFT' AND updated_at = :expectedUpdatedAt
         """
     )

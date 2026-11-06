@@ -170,9 +170,28 @@ class CaseRecommendationService(
         relink(
             runId, userId, saved.associate { it.id to it.testCaseId },
             saved.filter { it.step.isNotBlank() && it.testCaseId != null }.associate { sameWords(it.step) to it.testCaseId!! },
+            // 승인 전 Test Case 를 승인된 시나리오에 이으면 그 시나리오의 QA 가 막힌다. 승인할 때 잇는다([linkApproved]).
+            onlyPendingScenarios = draft,
         )
         logger.info("추천 TC 저장 [runId={}] {}", runId, saved.map { it.id to it.testCaseId })
         return saved
+    }
+
+    /** 승인된 Test Case 를 그 추천을 기다리던 시나리오에 잇는다. */
+    suspend fun linkApproved(caseId: Long, userId: Long) {
+        val saved = databaseClient.sql("SELECT id, test_run_id, step FROM case_recommendation WHERE test_case_id = :c AND status = 'SAVED'")
+            .bind("c", caseId)
+            .map { row, _ ->
+                Triple(
+                    row.get("id", java.lang.Long::class.java)!!.toLong(),
+                    row.get("test_run_id", java.lang.Long::class.java)!!.toLong(),
+                    row.get("step", String::class.java).orEmpty(),
+                )
+            }
+            .all().collectList().awaitSingle()
+        for ((id, runId, step) in saved) {
+            relink(runId, userId, mapOf(id to caseId), if (step.isBlank()) emptyMap() else mapOf(sameWords(step) to caseId))
+        }
     }
 
     /** 추천을 버린다. 그 추천을 가리키던 스텝은 판정 없는 스텝으로 남는다. */
@@ -195,14 +214,20 @@ class CaseRecommendationService(
      * 추천을 가리키던 스텝을 바꾼다. 값이 TC id 면 그 TC 를 확인하는 스텝이 되고, null 이면 추천 표시만 뗀다. 이 런의 저장된
      * 시나리오와 이 사용자의 draft 를 함께 바꾼다.
      */
-    private suspend fun relink(runId: Long, userId: Long, to: Map<Long, Long?>, byAction: Map<String, Long> = emptyMap()) {
+    private suspend fun relink(
+        runId: Long,
+        userId: Long,
+        to: Map<Long, Long?>,
+        byAction: Map<String, Long> = emptyMap(),
+        onlyPendingScenarios: Boolean = false,
+    ) {
         if (to.isEmpty() && byAction.isEmpty()) return
         val rows = databaseClient.sql(
             """
             SELECT s.id, s.steps::text AS steps FROM test_scenario s
               JOIN test_run_scenario r ON r.test_scenario_id = s.id
              WHERE r.test_run_id = :r AND (s.steps::text LIKE '%recommendation_id%' OR s.steps::text LIKE '%HUMAN%')
-            """.trimIndent()
+            """.trimIndent() + if (onlyPendingScenarios) " AND s.review_status = 'DRAFT'" else ""
         ).bind("r", runId).map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() to row.get("steps", String::class.java)!! }
             .all().collectList().awaitSingle()
         for ((scenarioId, text) in rows) {

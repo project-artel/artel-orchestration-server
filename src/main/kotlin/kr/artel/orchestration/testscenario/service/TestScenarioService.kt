@@ -42,6 +42,7 @@ class TestScenarioService(
     /** Artel Bot 이 고치는 중인 런의 시나리오는 사람이 쓰지 못한다(ARTEL-1264). */
     private val runLocks: RunAuthoringLocks,
     private val testCases: kr.artel.orchestration.testcase.repository.TestCaseRepository,
+    private val absorbService: ScenarioAbsorbService,
 ) {
 
     internal suspend fun validateReviewedCases(projectId: Long, draft: ScenarioDraft) {
@@ -149,7 +150,10 @@ class TestScenarioService(
         runLocks.assertScenarioWritable(testScenarioId)
         if (draft == null && entity.reviewStatus == "DRAFT") {
             validateReviewedCases(entity.projectId, entity.toDraft(objectMapper))
-            scenarioRepository.save(entity.copy(reviewStatus = "READY", reviewRequestedBy = null, reviewEditsApproved = false))
+            scenarioRepository.save(
+                entity.copy(reviewStatus = "READY", reviewRequestedBy = null, reviewEditsApproved = false, reviewAbsorbs = null)
+            )
+            absorbService.absorbOnApproval(entity)
             projectChanges.notify(entity.projectId, ProjectChangeTopic.TEST_RUNS)
         }
         if (draft != null) {
@@ -161,8 +165,10 @@ class TestScenarioService(
                 steps = ExpectedLabelPolicy.carryOver(stated.steps, entity.toDraft(objectMapper).steps)
             )
             scenarioRepository.save(
-                entity.withDraft(safe, objectMapper).copy(reviewStatus = "READY", reviewRequestedBy = null, reviewEditsApproved = false)
+                entity.withDraft(safe, objectMapper)
+                    .copy(reviewStatus = "READY", reviewRequestedBy = null, reviewEditsApproved = false, reviewAbsorbs = null)
             )
+            if (entity.reviewStatus == "DRAFT") absorbService.absorbOnApproval(entity)
             projectChanges.notify(entity.projectId, ProjectChangeTopic.TEST_RUNS)
         }
     }

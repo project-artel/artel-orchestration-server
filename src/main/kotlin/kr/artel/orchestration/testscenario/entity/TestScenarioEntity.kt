@@ -53,6 +53,10 @@ data class TestScenarioEntity(
     @Column("review_edits_approved")
     val reviewEditsApproved: Boolean = false,
 
+    /** 승인하면 걷어낼 시나리오 번호의 JSON 배열(합치기). 승인 전에는 원본을 지우지 않는다. */
+    @Column("review_absorbs")
+    val reviewAbsorbs: Json? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

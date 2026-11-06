@@ -110,6 +110,7 @@ class TestScenarioReconcileIntegrationTest {
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var compositionService: kr.artel.orchestration.testscenario.service.ScenarioCompositionService
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
+    @Autowired private lateinit var authoringDrafts: kr.artel.orchestration.testscenario.service.AuthoringDraftStore
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var runMessageRepository: kr.artel.orchestration.testrun.repository.TestRunMessageRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
@@ -1617,6 +1618,42 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(refused.first).isEqualTo(409)
         assertThat(refused.second).contains("review_not_rejectable")
         assertThat(testCaseRepository.findById(id)).isNotNull
+    }
+
+    @Test
+    fun `MCP 로 저장한 합치기는 승인할 때 원본을 걷어내고 거절하면 원본이 남는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        commitScenarios(client, projectId, runId, token, """[{"title":"원본","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val original = scenarioRepository.findByProjectId(projectId).toList().single().id!!
+        val queue = "/api/projects/$projectId/test-scenario/review-queue"
+        suspend fun applyMerged(title: String) {
+            val draft = authoringDrafts.of("$appUserId:$runId")
+            val merged = objectMapper.readValue(
+                """{"title":"$title","description":"d","steps":[{"action":"연다","case_id":$case}]}""",
+                kr.artel.orchestration.testscenario.dto.ScenarioResult::class.java,
+            )
+            val id = draft.accept(null, listOf(merged), listOf(original)).single().draftId
+            val applied = send(client, "POST", "/api/projects/$projectId/test-runs/$runId/chat/draft/apply", token, """{"draft_ids":["$id"],"draft":true}""")
+            assertThat(applied.first).isEqualTo(200)
+        }
+
+        applyMerged("합친 여정")
+        assertThat(scenarioRepository.findById(original)!!.reviewStatus).isEqualTo("READY")
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId }).contains(original)
+
+        val rejected = objectMapper.readTree(send(client, "GET", queue, token).second).single()
+        assertThat(reviewScenario(client, projectId, rejected, token, "REJECT").first).isEqualTo(204)
+        assertThat(scenarioRepository.findById(original)).isNotNull
+
+        applyMerged("다시 합친 여정")
+        val approved = objectMapper.readTree(send(client, "GET", queue, token).second).single()
+        assertThat(reviewScenario(client, projectId, approved, token, "APPROVE").first).isEqualTo(204)
+        assertThat(scenarioRepository.findById(original)).isNull()
+        assertThat(scenarioRepository.findById(approved["testScenarioId"].asLong())!!.reviewAbsorbs).isNull()
     }
 
     private fun reviewScenario(client: WebClient, projectId: Long, read: com.fasterxml.jackson.databind.JsonNode, token: String, decision: String) =
