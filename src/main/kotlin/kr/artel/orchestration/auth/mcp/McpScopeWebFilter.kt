@@ -72,6 +72,20 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/messages", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs", McpScope.SCENARIO_WRITE),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/message", McpScope.SCENARIO_WRITE),
+    // QA 실행. 개발자 에이전트가 모델 · 시나리오 · 실행 설정을 골라 QA 를 돌리고 결과를 읽는다. 시작 · 취소는 TR 의 시나리오를
+    // 실행하는 일이라 `scenario:write`, 목록 · 상태 · 판정은 `testcase:read` 다. 멤버 검사와 "인스턴스 · 시나리오가 같은 프로젝트"
+    // 검사는 [kr.artel.orchestration.qa.service.QaTryService] 가 한다.
+    McpRoute(HttpMethod.GET, "/api/qa-models", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-instances", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/qa-runs", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/qa-runs", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.GET, "/api/qa-runs/{qaRunId}", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/qa-runs/{qaRunId}/verdicts", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/qa-runs/{qaRunId}/cancel", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.POST, "/api/qa-tries", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.GET, "/api/qa-tries/{qaTryId}", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/qa-tries/{qaTryId}/verdicts", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/qa-tries/{qaTryId}/cancel", McpScope.SCENARIO_WRITE),
     // 저작 draft(ARTEL-1310) — MCP 를 쓰는 사람이 콘솔에서 draft 를 보고 저장 · 버린다. 화면과 같은 draft 다.
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/draft", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply", McpScope.SCENARIO_WRITE),
