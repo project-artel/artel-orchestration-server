@@ -4334,11 +4334,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -4549,6 +4549,55 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/RunScenariosResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/copies": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "copy",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunCopyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunResponse"
                 }
               }
             }
@@ -17712,6 +17761,23 @@
           }
         }
       },
+      "TestRunCopyRequest": {
+        "required": [
+          "unversioned"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "unversioned": {
+            "type": "boolean"
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
       "RunChatMessage": {
         "required": [
           "answers",
@@ -19188,11 +19254,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
