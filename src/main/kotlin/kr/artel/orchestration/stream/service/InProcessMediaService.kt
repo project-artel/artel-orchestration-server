@@ -158,13 +158,14 @@ class InProcessMediaService internal constructor(private val recorder: QaVideoRe
             "code" to "SDK_UPDATE_REQUIRED")))
     }
 
-    suspend fun latestFrame(streamId: UUID, recordingId: UUID): ByteArray? {
+    suspend fun latestFrame(streamId: UUID, recordingId: UUID, maxAgeNanos: Long = Long.MAX_VALUE): ByteArray? {
         val stream = streams[streamId] ?: return null
         val frame = stream.gate.withLock {
+            val now = nanoTime()
             stream.latest?.takeIf {
                 it.recordingId == recordingId && stream.recordingId == recordingId &&
                     stream.sdkIdentity === sessions.sessionIdentity(stream.instanceId) &&
-                    stream.state(nanoTime()) == "connected"
+                    stream.state(now) == "connected" && now - stream.lastFrameNanos <= maxAgeNanos
             }
         } ?: return null
         return Base64.getDecoder().decode(frame.jpeg)
