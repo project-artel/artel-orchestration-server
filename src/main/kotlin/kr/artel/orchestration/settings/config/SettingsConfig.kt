@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration
     BedrockProperties::class,
     AnthropicProperties::class,
     OpenAiProperties::class,
+    ModelDiscoveryProperties::class,
     AgentServerProperties::class
 )
 class SettingsConfig

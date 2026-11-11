@@ -18,6 +18,7 @@ import kr.artel.orchestration.qa.service.QaTryDetailService
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.TYPES as QA_LOG_TYPES
 import kr.artel.orchestration.qa.service.toContentMapMode
+import kr.artel.orchestration.qa.service.toInputMode
 import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.qa.service.toRunSettings
@@ -73,7 +74,8 @@ class QaTryController(
                 request.toContentMapMode(),
                 if (useProjectKey) QaRunKey() else userLlmKeyService.resolveForRun(appUserId, request.model, request.keySource),
                 request.toFunctionOptions(),
-                if (useProjectKey) ({ projectId -> projectLlmKeys.resolve(projectId, appUserId, request.model) }) else null
+                if (useProjectKey) ({ projectId -> projectLlmKeys.resolve(projectId, appUserId, request.model) }) else null,
+                inputMode = request.toInputMode()
             )
         )
     }

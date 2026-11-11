@@ -44,6 +44,41 @@ class ScenarioContradictionCheckTest {
      * 들어갔다 나오면 진행도가 올라 있고, 그것을 안 놓으면 멀쩡한 흐름이 전부 어긋나 보인다.
      */
     @Test
+    fun `케이스가 더한 값은 지나서 반영된다 — 클리어하면 다음 지역으로 간다`() {
+        // 평원 클리어(`== 0` 을 요구하고 `+1` 을 남긴다) 뒤에 해안으로 간다(`>= 1`). 지도가 진행을 올리는 화면을 몰라도 맞다.
+        val walk = listOf(
+            Step(at = 12, caseId = 198, requires = listOf(needs("스테이지_진행", "==", "0")),
+                 sets = mapOf("스테이지_진행" to "0"), adds = mapOf("스테이지_진행" to 1.0)),
+            Step(at = 15, caseId = 153, requires = listOf(needs("스테이지_진행", ">=", "1"))),
+            Step(at = 22, caseId = 199, requires = listOf(needs("스테이지_진행", "==", "1")),
+                 sets = mapOf("스테이지_진행" to "1"), adds = mapOf("스테이지_진행" to 1.0)),
+            Step(at = 27, caseId = 153, requires = listOf(needs("스테이지_진행", ">=", "2"))),
+        )
+
+        assertThat(ScenarioContradictionCheck.find(walk)).isEmpty()
+    }
+
+    @Test
+    fun `더한 뒤에도 모자라면 짚고, 모르는 값에 더하면 놓아 준다`() {
+        val short = listOf(
+            Step(at = 1, caseId = 1, sets = mapOf("동전" to "10"), adds = mapOf("동전" to 5.0)),
+            Step(at = 2, caseId = 2, requires = listOf(needs("동전", ">=", "20"))),
+        )
+        val found = ScenarioContradictionCheck.find(short)
+        assertThat(found.single().have).isEqualTo("15")
+        assertThat(found.single().madeAt).isEqualTo(1)
+
+        // 얼마에서 더했는지 모르면 결과도 모른다 — 짚지 않고, 시작 조건으로도 내지 않는다.
+        val unknown = listOf(
+            Step(at = 1, caseId = 1, adds = mapOf("동전" to -5.0)),
+            Step(at = 2, caseId = 2, requires = listOf(needs("동전", ">=", "20"))),
+        )
+        val walked = ScenarioContradictionCheck.walk(unknown)
+        assertThat(walked.contradictions).isEmpty()
+        assertThat(walked.opening).isEmpty()
+    }
+
+    @Test
     fun `사이에 그 값이 모르게 되는 자리가 있으면 짚지 않는다`() {
         val walk = listOf(
             Step(at = 1, caseId = 1636, requires = listOf(needs("StagePosition", ">=", "1")),

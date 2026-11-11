@@ -35,6 +35,14 @@ SDK는 실행 대기 목록과 journal에 등록한 뒤 수신 ACK를 보낸다.
 - 연결 종료나 실행 예외로 중단된 요청은 실행 여부 미확인 실패로 보관한다. 일부 효과가 발생했을 수 있으므로 같은 ID를 다시 실행하지 않는다.
 - 서버가 결과를 받은 뒤 agent 중계에 실패하면 SDK의 결과 재응답으로 중계를 재시도한다. 로그와 agent 봉투의 식별자는 같은 값을 유지한다.
 
+## QA run 입력 모드 설정
+
+`POST /api/qa-runs`와 `POST /api/qa-tries`는 선택 필드 `inputMode`에 `virtual` 또는 `os`를 받는다. 생략하면 `virtual`이다. 잘못된 값은 400이다. 선택한 값은 `run_config.input_mode`에 기록하고, run의 모든 시나리오에 같은 값을 적용한다. 시작·조회 응답에는 `inputMode`를 표시한다.
+
+`os`를 선택하면 서버는 Agent 세션을 열기 전에 SDK에 `configure_input`을 보낸다. 파라미터는 `[{"mode":"os"}]`다. SDK가 지원하지 않거나 권한 검사를 거절하면 400 `sdk_input_unavailable`, 정해진 시간 안에 답이 없으면 503 `sdk_input_timeout`을 반환한다. `virtual`은 이 검사를 생략하므로 구버전 SDK에서도 시작할 수 있다.
+
+QA `ACTION`에는 서버가 저장한 `inputMode`를 싣는다. `os` 요청은 확인한 WebSocket 세션에서만 전송하고 재전송한다. 완료되지 않은 `os` 요청이 있는데 세션이 교체되면 해당 try를 오류로 종료한다. 새 세션으로 다음 요청을 보내기 전에도 SDK 지원을 다시 확인한다.
+
 ## 적용 범위와 제한
 
 자동 재전송은 QA ACTION에만 적용한다. 스캔·화면 캡처 등 별도 요청 ID 공간에는 이 변경으로 재전송을 추가하지 않는다. 구버전 SDK에는 `delivery` 필드를 보내지 않고 기존 단발 전송을 유지한다.
