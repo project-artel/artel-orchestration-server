@@ -40,6 +40,7 @@ import reactor.netty.http.server.HttpServer
  * 시나리오 생성 챗봇에서 고른 model 과 key 로 저작 세션이 돈다(ARTEL-1427).
  *
  * QA 실행과 같은 규칙이다 — 고른 model 은 `keySource` 의 key 로 열고, 그 key 가 없으면 공용 key 로 넘어가지 않고 400 이다.
+ * 기본 model 은 없다 — 고르지 않은 말은 400 `model_required` 다.
  * 목 Agent 는 세션 개설 본문과 WS 프레임을 그대로 모아 두고, 턴마다 빈 결과로 답해 다음 말을 받을 수 있게 한다.
  */
 @ActiveProfiles("test")
@@ -79,6 +80,7 @@ class RunChatModelChoiceIntegrationTest {
         private const val RESULT_JSON = """{"type":"result","message":"알겠습니다","scenarios":[]}"""
         private const val USER_ANTHROPIC_KEY = "sk-ant-model-choice-0000wxyz"
         private const val CLAUDE = "claude/claude-sonnet-5-5"
+        private const val LUNA = "openai/gpt-6-luna"
 
         /** 목 Agent 가 받은 `POST /sessions` 본문. */
         private val openBodies = CopyOnWriteArrayList<String>()
@@ -222,8 +224,9 @@ class RunChatModelChoiceIntegrationTest {
         storeAnthropicKey(appUserId)
         val opened = openBodies.size
 
-        assertThat(send(projectId, runId, token, """{"message":"기본 모델로 시작 run$runId"}""").first).isEqualTo(200)
+        assertThat(send(projectId, runId, token, """{"message":"공용 key 로 시작 run$runId","model":"$LUNA","keySource":"platform"}""").first).isEqualTo(200)
         awaitSize(openBodies, opened + 1)
+        assertThat(json(openBodies[opened])["model"].asText()).isEqualTo(LUNA)
         assertThat(json(openBodies[opened]).has("llm_key")).isFalse()
 
         Thread.sleep(1500)
@@ -253,20 +256,36 @@ class RunChatModelChoiceIntegrationTest {
     }
 
     @Test
-    fun `기본 모델은 멤버에게만 알려 준다`(): Unit = runBlocking {
+    fun `모델을 고르지 않은 말은 400 model_required 이고 세션을 열지 않는다`(): Unit = runBlocking {
         val (appUserId, token) = issueUser()
         val (projectId, runId) = memberRun(appUserId)
-        val (_, outsider) = issueUser()
+        val opened = openBodies.size
 
-        fun get(cookie: String) = webClient().get()
-            .uri("/api/projects/$projectId/test-runs/$runId/chat/default-model")
-            .cookie("artel_access_token", cookie)
-            .exchangeToMono { it.bodyToMono(String::class.java).defaultIfEmpty("").map { text -> it.statusCode().value() to text } }
-            .block(Duration.ofSeconds(5))!!
+        val (status, body) = send(projectId, runId, token, """{"message":"모델 없이 run$runId"}""")
 
-        val (status, body) = get(token)
-        assertThat(status).isEqualTo(200)
-        assertThat(json(body).has("model")).isTrue()
-        assertThat(get(outsider).first).isEqualTo(404)
+        assertThat(status).isEqualTo(400)
+        assertThat(json(body)["code"].asText()).isEqualTo("model_required")
+        Thread.sleep(800)
+        assertThat(openBodies).hasSize(opened)
+    }
+
+    @Test
+    fun `사용자 key 의 model 에서 공용 key 의 model 로 바꾸면 그 턴의 key 칸이 빈다`(): Unit = runBlocking {
+        val (appUserId, token) = issueUser()
+        val (projectId, runId) = memberRun(appUserId)
+        storeAnthropicKey(appUserId)
+        val opened = openBodies.size
+
+        assertThat(send(projectId, runId, token, """{"message":"내 키로 시작 run$runId","model":"$CLAUDE","keySource":"user"}""").first).isEqualTo(200)
+        awaitSize(openBodies, opened + 1)
+
+        Thread.sleep(1500)
+        val turns = turnFrames.size
+        assertThat(send(projectId, runId, token, """{"message":"공용 key 로","model":"$LUNA","keySource":"platform"}""").first).isEqualTo(200)
+        awaitSize(turnFrames, turns + 1)
+
+        val turn = json(turnFrames.last { it.contains("\"type\":\"turn\"") })
+        assertThat(turn["model"].asText()).isEqualTo(LUNA)
+        assertThat(turn.has("llm_key")).isFalse()
     }
 }

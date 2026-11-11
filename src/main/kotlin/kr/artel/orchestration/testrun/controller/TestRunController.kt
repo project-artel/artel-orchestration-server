@@ -233,15 +233,6 @@ class TestRunController(
     ): List<MessageResponse> =
         chatService.getMessages(runId, appUserId)
 
-    /** 고르지 않았을 때 저작이 쓰는 model(ARTEL-1427). 챗봇이 "기본 모델" 을 로고 · 이름으로 보인다. */
-    @GetMapping("/{runId}/chat/default-model")
-    suspend fun chatDefaultModel(
-        @PathVariable projectId: Long,
-        @PathVariable runId: Long,
-        @CurrentUserId appUserId: Long
-    ): kr.artel.orchestration.testrun.dto.RunChatDefaultModel =
-        chatService.defaultModel(appUserId, runId)
-
     /** Agent 응답을 실시간 수신하는 SSE 스트림(타입화된 ScenarioStreamEvent). */
     @GetMapping("/{runId}/chat/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     suspend fun chatStream(

@@ -10637,46 +10637,6 @@
         }
       }
     },
-    "/api/projects/{projectId}/test-runs/{runId}/chat/default-model": {
-      "get": {
-        "tags": [
-          "test-run-controller"
-        ],
-        "operationId": "chatDefaultModel",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "runId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/RunChatDefaultModel"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/projects/{projectId}/test-runs/{runId}/cases-outside-build": {
       "get": {
         "tags": [
@@ -23448,14 +23408,6 @@
             "additionalProperties": {
               "type": "object"
             }
-          }
-        }
-      },
-      "RunChatDefaultModel": {
-        "type": "object",
-        "properties": {
-          "model": {
-            "type": "string"
           }
         }
       },

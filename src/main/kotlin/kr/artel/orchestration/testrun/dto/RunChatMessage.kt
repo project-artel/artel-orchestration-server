@@ -14,8 +14,8 @@ import kr.artel.orchestration.testscenario.dto.ScenarioQuestionAnswer
  *   제안으로만 두어 사용자가 카드로 검토·커밋한다(카드 검토 모드). FE의 사용자 토글에서 정한다.
  * @property draftOnly 승인 전 draft 만 고치는 말(ARTEL-1074). draft 가 있는 동안은 이 말만 받는다 — 결과는 늘
  *   draft 에 남고([autoApply] 를 보지 않는다), 모델은 draft 만 본다.
- * @property model 사용자가 고른 저작 model(ARTEL-1427). 비면 지금처럼 기능별 저작 model 이다. 고르는 목록은
- *   QA 실행과 같은 `GET /api/qa-models` 다.
+ * @property model 사용자가 고른 저작 model(ARTEL-1427). 꼭 있어야 한다 — 기본 model 은 없고, 비면 400 `model_required` 다.
+ *   고르는 목록은 QA 실행과 같은 `GET /api/qa-models` 다.
  * @property keySource 그 model 을 부를 key — `platform` · `user` · `project`. QA 실행의 `keySource` 와 같다.
  */
 data class RunChatMessage(

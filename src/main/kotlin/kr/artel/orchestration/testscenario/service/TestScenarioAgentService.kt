@@ -26,7 +26,6 @@ import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.service.QaSessionLlmKey
-import kr.artel.orchestration.settings.service.FeatureModelService
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -110,7 +109,6 @@ class TestScenarioAgentService(
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     agentProperties: AgentServerProperties,
-    private val featureModels: FeatureModelService,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val runMessageRepository: TestRunMessageRepository,
@@ -176,8 +174,8 @@ class TestScenarioAgentService(
         answers: List<ScenarioQuestionAnswer> = emptyList(),
         batchIds: List<String>? = null,
         batchChanged: Boolean = false,
-        /** 사용자가 고른 model 과 key(ARTEL-1427). null 이면 기능별 저작 model · 공용 key 다. */
-        choice: AuthoringModelChoice? = null,
+        /** 사용자가 고른 model 과 key(ARTEL-1427). 기본 model 은 없다 — 고르지 않은 말은 [TestRunChatService] 가 거절한다. */
+        choice: AuthoringModelChoice,
     ) {
         // **질문지 한 묶음의 답은 한 번에 받는다.** 하나 답할 때마다 보내면 질문 넷에 요청이 넷 나가고, 둘째부터는
         // 앞선 턴이 도는 중이라 막혔다. 답마다 계약 · 길은 따로 남기고, 모델에게는 한 줄로 모아 한 번 보낸다. 경로 공백은
@@ -641,15 +639,14 @@ class TestScenarioAgentService(
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
         draftOnly: Boolean = false,
-        choice: AuthoringModelChoice? = null,
+        choice: AuthoringModelChoice,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
-        // 저장된 model → 환경 변수 → 공용 key 가 유효한 provider 의 model → agent-server 기본값 순이다. 세션을 열 때마다 읽는다.
-        // 사용자가 고른 model 이 있으면 그것이 먼저다(ARTEL-1427). key 는 고른 것만 싣는다 — 없으면 공용 key 다.
-        val configuredModel = choice?.model ?: featureModels.resolveAuthoringModel().orEmpty()
+        // 사용자가 고른 model 로 연다(ARTEL-1427). 기본 model 은 없다. key 는 고른 것만 싣는다 — 공용 key 면 없다.
+        val configuredModel = choice.model
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
@@ -668,7 +665,7 @@ class TestScenarioAgentService(
             runId, "판을 연다",
             "말: $userInput\n" +
                 "케이스 ${cases.size}건 ${trace.blob(runId, "cases.json", objectMapper.writeValueAsString(cases))}\n" +
-                "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} (${choice?.keySource?.wire ?: "platform"} key) · 말투: $locale · " +
+                "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} (${choice.keySource.wire} key) · 말투: $locale · " +
                 "이미 있는 시나리오 ${currentScenarios.size}개",
         )
         // **흐름을 끄면 짝 행렬도 안 푼다**(실험). 안 보낼 값을 계산할 이유가 없다 —
@@ -687,7 +684,7 @@ class TestScenarioAgentService(
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
-            llmKey = choice?.llmKey,
+            llmKey = choice.llmKey,
             reasoning = experiment.reasoningMaxTokens
                 .takeIf { it > 0 }
                 ?.let { AgentReasoning(maxTokens = it) },
@@ -1739,18 +1736,12 @@ class TestScenarioAgentService(
     private data class ModelSwitch(val model: String, val llmKey: QaSessionLlmKey?)
 
     /**
-     * 이번 턴에 고른 model · key 가 세션이 쓰던 것과 다르면 교체를 낸다(ARTEL-1427). 고른 것이 없으면 기능별 저작 model
-     * 로 되돌린다 — 앞서 사용자 key 로 돌던 대화가 기본 model 을 다시 고른 뒤에도 그 key 로 돌면 안 된다.
-     * 되돌릴 model 을 모르면(설정 · 공용 key 모두 없음) 교체하지 않는다.
+     * 이번 턴에 고른 model · key 가 세션이 쓰던 것과 다르면 교체를 낸다(ARTEL-1427). 공용 key 로 바꾸면 key 칸이 빈다 —
+     * 앞서 사용자 key 로 돌던 대화가 공용 key 의 model 을 고른 뒤에도 그 key 로 돌면 안 된다. 세션에 적는 것은 턴을
+     * 보낸 뒤다([sendTurn]) — 보내기가 실패했는데 적어 두면 다음 턴이 교체를 다시 싣지 않는다.
      */
-    private suspend fun modelSwitch(session: AgentSession, choice: AuthoringModelChoice?): ModelSwitch? {
-        val model = choice?.model ?: featureModels.resolveAuthoringModel() ?: return null
-        val llmKey = choice?.llmKey
-        if (model == session.model && llmKey == session.llmKey) return null
-        session.model = model
-        session.llmKey = llmKey
-        return ModelSwitch(model, llmKey)
-    }
+    private fun modelSwitch(session: AgentSession, choice: AuthoringModelChoice): ModelSwitch? =
+        if (choice.model == session.model && choice.llmKey == session.llmKey) null else ModelSwitch(choice.model, choice.llmKey)
 
     private fun sendTurn(
         sessionKey: String,
@@ -1776,6 +1767,10 @@ class TestScenarioAgentService(
         val result = session.outbound.tryEmitNext(json)
         if (result.isFailure) {
             throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
+        }
+        switch?.let {
+            session.model = it.model
+            session.llmKey = it.llmKey
         }
     }
 
