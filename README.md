@@ -17,14 +17,13 @@ flowchart LR
     sdk["artel-sdk<br>도는 Unity 게임"]
     agent["artel-agent-server<br>QA agent"]
 
-    home -->|"JWT 쿠키 · 8080 /api/**, /ws/viewer"| orch
-    sdk -->|"Bearer aud=artel-sdk · 8080 /api/sdk/**, /ws/sdk"| orch
+    home <-->|"JWT 쿠키 · /api/** · /ws/viewer 영상 수신"| orch
+    sdk -->|"SDK JWT · /api/sdk/** · /ws/sdk JPEG 송출"| orch
     agent -->|"인증 없음 · 8081 /internal/**"| orch
     orch -->|"HTTP + WebSocket 으로 이쪽에서 건다"| agent
-    sdk -.->|"WebRTC media · P2P"| home
 ```
 
-- **media 는 이 서버를 지나지 않음** — screen 스트리밍은 SDK 와 브라우저 사이 P2P 이고 이 서버는 signalling 만 중계함
+- SDK가 `JPEG_WS`로 보낸 화면을 이 서버가 여러 viewer에 중계하고, QA 영상은 같은 프로세스에서 MP4로 저장함. 자세한 전송 규칙은 [스트리밍 프로토콜](docs/streaming-protocol.md)에 있음
 - agent-server 와의 방향이 반대임 — agent-server 는 `/internal/**` 을 부르러 오고, QA 런과 시나리오 생성은
   이 서버가 agent-server 에 먼저 걺
 - 더 자세한 것은 [`docs/architecture.md`](docs/architecture.md)
@@ -38,7 +37,7 @@ flowchart LR
 | `game` | `game_instance` 와 `game_build`. SDK 가 실행마다 부르는 등록 지점 |
 | `sdk` | `/ws/sdk` 세션과 메시지 분기 |
 | `sdkperf` | SDK 가 보고하는 프레임 지표와 그 보존 주기 |
-| `stream` | `/ws/viewer`, WebRTC signalling, lease |
+| `stream` | `/ws/viewer`, `JPEG_WS` 중계, viewer lease, QA 영상 저장 |
 | `contentmap` | 게임 빌드의 지도 — `scene`, `capability`, `capability_evidence` |
 | `scenecontext` | agent 가 지금 화면에 대해 읽는 문맥. `/internal` 전용 |
 | `testcase` | test case 와 명세, pgvector 검색 |

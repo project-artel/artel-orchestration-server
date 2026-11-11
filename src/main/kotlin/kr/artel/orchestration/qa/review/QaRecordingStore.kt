@@ -32,6 +32,15 @@ class QaRecordingStore(private val database: DatabaseClient, private val storage
         database.sql("SELECT * FROM qa_recording WHERE qa_run_id = :run AND ended_at IS NULL")
             .bind("run", runId).map { row, _ -> recording(row) }.awaitSingleOrNull()
 
+    suspend fun findActiveTryRecording(tryId: Long): QaRecording? =
+        database.sql("""
+            SELECT v.* FROM qa_try t
+            JOIN qa_recording v ON v.owner_key = CASE WHEN t.qa_run_id IS NULL
+                THEN 'try:' || t.id ELSE 'run:' || t.qa_run_id END
+                AND v.game_instance_id = t.game_instance_id
+            WHERE t.id = :tryId AND t.status IN ('STARTING', 'RUNNING') AND v.ended_at IS NULL
+        """).bind("tryId", tryId).map { row, _ -> recording(row) }.awaitSingleOrNull()
+
     suspend fun active(): List<QaRecording> {
         // run이 시나리오를 바꿔도 같은 recording을 유지한다. 단독 try는 별도 소유 키를 쓴다.
         database.sql("""

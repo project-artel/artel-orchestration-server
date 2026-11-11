@@ -42,8 +42,8 @@
 
 | 방향 | 경로 | 무엇이 흐르나 |
 | --- | --- | --- |
-| 인바운드 | `/ws/sdk` | action 과 그 결과, `pulse`, `GAME_STATE`, WebRTC signalling |
-| 인바운드 | `/ws/viewer` | 스트리밍 lease 갱신과 signalling |
+| 인바운드 | `/ws/sdk` | action과 그 결과, `pulse`, `GAME_STATE`, `JPEG_WS` 영상과 ACK |
+| 인바운드 | `/ws/viewer` | viewer lease 갱신과 `JPEG_WS` 영상 |
 | 아웃바운드 | agent-server `/sessions/{id}` | 시나리오 생성 대화 |
 | 아웃바운드 | agent-server `/qa-sessions/{id}` | QA 런 `envelope` |
 
@@ -52,7 +52,7 @@
 - 프레임 상한 256 KB 를 둘이 나눠 씀 — [ADR 0006](adr/0006-websocket-frame-limit.md)
 - `/ws/sdk` 는 Security 체인을 타지 않음. 자격증명이 헤더가 아니라 쿼리에 실려 핸들러가 직접 검증함
 - 아웃바운드 둘은 이 서버가 agent-server 에 먼저 거는 것임. `POST` 로 세션을 열고 그 id 로 소켓을 붙임
-- **media 는 어느 소켓도 지나지 않음** — 프로토콜은 [`streaming-protocol.md`](streaming-protocol.md)
+- SDK가 보낸 JPEG를 orchestration JVM이 여러 viewer에 중계한다. QA 녹화가 진행 중이면 같은 프레임을 MP4로 인코딩해 S3에 저장한다. 전송과 대기열 규칙은 [스트리밍 프로토콜](streaming-protocol.md)에 있다.
 
 ## 세 단계 — TestRun → TestScenario → TestCase
 
