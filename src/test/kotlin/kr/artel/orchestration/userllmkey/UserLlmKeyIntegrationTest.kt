@@ -193,7 +193,7 @@ class UserLlmKeyIntegrationTest {
     @AfterEach
     fun clean(): Unit = runBlocking {
         wipe()
-        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = TRUE, updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(userId)
     }
@@ -335,19 +335,18 @@ class UserLlmKeyIntegrationTest {
         val user = entries.filter { it["keySource"].asText() == "user" }
 
         // 공용 항목이 먼저다. `gpt/` 행은 공용 OpenAI key 가 없어, `claude/` 행은 관리 화면의 Claude API key 가 없어
-        // 공용 항목이 아니다. OpenRouter 와 Bedrock 행은 그대로다.
+        // 공용 항목이 아니다. OpenRouter 행은 그대로다.
         assertThat(entries.indexOfLast { it["keySource"].asText() == "platform" }).isEqualTo(platform.size - 1)
         assertThat(platform.map { it["id"].asText() })
             .noneMatch { it.startsWith("gpt/") || it.startsWith("claude/") }
-            .contains("openai/gpt-6-luna", "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
+            .contains("openai/gpt-6-luna", "anthropic/claude-opus-5.5")
         assertThat(platform).allSatisfy { entry ->
             assertThat(entry["keyProvider"].isNull).isTrue()
             assertThat(entry["keyRegistered"].isNull).isTrue()
         }
 
-        // Bedrock 은 사용자 key 가 없다. 나머지 켜진 행은 모두 사용자 항목이 있다.
+        // 켜진 행은 모두 사용자 항목이 있다.
         val providerById = user.associate { it["id"].asText() to it["keyProvider"].asText() }
-        assertThat(providerById.keys).noneMatch { it.startsWith("bedrock/") }
         assertThat(providerById).containsEntry("claude/claude-sonnet-5-5", "anthropic")
             .containsEntry("gpt/gpt-6.1-sol", "openai")
             .containsEntry("gpt/gpt-5.6-terra", "openai")
@@ -356,15 +355,12 @@ class UserLlmKeyIntegrationTest {
             .containsEntry("claude/claude-opus-5-5", "anthropic")
             .containsEntry("claude/claude-fable-5-1", "anthropic")
         // 공용 항목에 없는 `gpt/` 넷과 `claude/` 넷이 사용자 항목에만 있다.
-        assertThat(user.size).isEqualTo(platform.count { !it["id"].asText().startsWith("bedrock/") } + 8)
+        assertThat(user.size).isEqualTo(platform.size + 8)
         assertThat(user).allSatisfy { entry ->
             assertThat(entry["keyRegistered"].asBoolean()).isFalse()
             assertThat(entry["keyHint"].isNull).isTrue()
         }
 
-        val haiku45 = platform.first { it["id"].asText() == "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0" }
-        assertThat(haiku45["pricing"]["inputPerMtok"].asDouble()).isEqualTo(1.00)
-        assertThat(haiku45["pricing"]["outputPerMtok"].asDouble()).isEqualTo(5.00)
         val sonnet = user.first { it["id"].asText() == "claude/claude-sonnet-5-5" }
         assertThat(sonnet["pricing"]["inputPerMtok"].asDouble()).isEqualTo(2.00)
         assertThat(sonnet["pricing"]["outputPerMtok"].asDouble()).isEqualTo(10.00)
@@ -407,7 +403,6 @@ class UserLlmKeyIntegrationTest {
         // id 가 없는 값이라 확인을 지나면 404 다.
         val refusals = listOf(
             """"model":"openai/gpt-6-luna","keySource":"user"""" to "llm_key_missing",
-            """"model":"bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0","keySource":"user"""" to "llm_key_missing",
             """"model":"gpt/gpt-6-luna","keySource":"platform"""" to "llm_key_missing",
             """"model":"gpt/gpt-6-luna"""" to "llm_key_missing",
             """"model":"openai/gpt-6-luna","keySource":"admin"""" to "invalid_request",

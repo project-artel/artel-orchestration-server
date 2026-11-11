@@ -269,13 +269,6 @@ artel:
   llm:
     openrouter-base-url: ${ARTEL_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
     check-timeout: ${ARTEL_OPENROUTER_CHECK_TIMEOUT:PT15S}
-  # 관리 화면의 Bedrock key 확인이 Converse 를 부르는 곳. key 는 platform_setting 에만 있다.
-  bedrock:
-    # agent-server 의 BEDROCK_REGION 과 같은 값이어야 확인 결과가 실제 호출과 맞는다.
-    region: ${BEDROCK_REGION:us-west-2}
-    # 비우면 https://bedrock-runtime.{region}.amazonaws.com 이다.
-    runtime-base-url: ${ARTEL_BEDROCK_RUNTIME_BASE_URL:}
-    check-timeout: ${ARTEL_BEDROCK_CHECK_TIMEOUT:PT15S}
   # 관리 화면의 Claude API key 확인이 GET /v1/models 를 부르는 곳. key 는 platform_setting 에만 있다.
   anthropic:
     base-url: ${ARTEL_ANTHROPIC_BASE_URL:https://api.anthropic.com}
@@ -289,7 +282,7 @@ artel:
     openrouter-api-key: ${ARTEL_MODEL_DISCOVERY_OPENROUTER_API_KEY:}
     openai-api-key: ${ARTEL_MODEL_DISCOVERY_OPENAI_API_KEY:}
     claude-api-key: ${ARTEL_MODEL_DISCOVERY_CLAUDE_API_KEY:}
-  # 관리 화면에서 넣은 비밀(OpenRouter, Bedrock, Claude API key)을 AES-GCM 으로 잠그는 키의 원천. 32 글자 이상이고
+  # 관리 화면에서 넣은 비밀(OpenRouter, Claude API key)을 AES-GCM 으로 잠그는 키의 원천. 32 글자 이상이고
   # 예시 문구를 담으면 기동하지 않는다. 비우면 관리 화면에서 key 를 저장할 수 없다. 바꾸면 저장된 값을 열 수 없어
   # key 를 다시 넣어야 한다.
   secrets:

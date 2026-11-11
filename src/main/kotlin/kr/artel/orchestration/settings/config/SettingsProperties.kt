@@ -25,30 +25,6 @@ data class LlmKeyProperties(
 )
 
 /**
- * Bedrock key 확인 호출이 가는 곳. key 자체는 `platform_setting` 에만 있고 여기에는 없다.
- */
-@ConfigurationProperties("artel.bedrock")
-data class BedrockProperties(
-    /** `BEDROCK_REGION`. agent-server 의 같은 이름 환경 변수와 같은 값이어야 확인 결과가 실제 호출과 맞는다. */
-    val region: String = "us-west-2",
-    /**
-     * Converse 를 부를 주소. 비우면 `https://bedrock-runtime.{region}.amazonaws.com` 이다. 테스트가 가짜
-     * 서버로 돌린다.
-     */
-    val runtimeBaseUrl: String = "",
-    /** model 하나를 확인하는 호출의 응답 상한. */
-    val checkTimeout: Duration = Duration.ofSeconds(15)
-) {
-    init {
-        require(region.isNotBlank()) { "artel.bedrock.region must not be blank" }
-    }
-
-    /** 실제로 부를 주소. 끝의 `/` 는 뗀다. */
-    val resolvedRuntimeBaseUrl: String
-        get() = runtimeBaseUrl.trim().ifEmpty { "https://bedrock-runtime.$region.amazonaws.com" }.trimEnd('/')
-}
-
-/**
  * Claude API(Anthropic API) key 확인 호출이 가는 곳. key 자체는 `platform_setting` 에만 있고 여기에는 없다.
  */
 @ConfigurationProperties("artel.anthropic")
@@ -125,11 +101,11 @@ private const val MIN_SECRETS_KEY_LENGTH = 32
  * `platform_setting` 의 암호화된 값을 여는 비밀. `ARTEL_SECRETS_KEY` 다.
  *
  * 비어 있어도 서버는 뜬다. 그때는 관리 화면에서 key 를 저장할 수 없고(409 `secrets_key_missing`),
- * agent-server 는 OpenRouter, Bedrock, Claude API key 없이 돈다. 비어 있지 않은 값은 [MIN_SECRETS_KEY_LENGTH] 글자 이상이어야 하고
+ * agent-server 는 OpenRouter, Claude API key 없이 돈다. 비어 있지 않은 값은 [MIN_SECRETS_KEY_LENGTH] 글자 이상이어야 하고
  * 예시 문구([PLACEHOLDER_FRAGMENTS])를 담으면 안 된다. 어기면 서버가 뜨지 않는다. 값은 오류 메시지에
  * 싣지 않는다. `openssl rand -hex 32` 가 만드는 64 글자 hex 는 통과한다.
  *
- * 이 값을 바꾸면 이미 저장된 값을 열 수 없게 되므로, OpenRouter, Bedrock, Claude API key 를 관리 화면에서 다시 넣어야 한다.
+ * 이 값을 바꾸면 이미 저장된 값을 열 수 없게 되므로, OpenRouter, Claude API key 를 관리 화면에서 다시 넣어야 한다.
  */
 @ConfigurationProperties("artel.secrets")
 data class SecretsProperties(

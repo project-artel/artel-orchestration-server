@@ -7,7 +7,6 @@ import org.springframework.context.annotation.Configuration
 @EnableConfigurationProperties(
     LlmKeyProperties::class,
     SecretsProperties::class,
-    BedrockProperties::class,
     AnthropicProperties::class,
     OpenAiProperties::class,
     ModelDiscoveryProperties::class,

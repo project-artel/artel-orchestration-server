@@ -119,7 +119,7 @@ class LlmModelCatalogIntegrationTest {
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM llm_model WHERE id = :id")
             .bind("id", IMPORTED_ID).fetch().rowsUpdated().awaitSingle()
-        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = TRUE, updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
@@ -163,16 +163,14 @@ class LlmModelCatalogIntegrationTest {
     }
 
     @Test
-    fun `the migrations seed twenty-three rows and leave only the two new bedrock rows disabled`() {
+    fun `the migrations leave twenty rows, all enabled, and no bedrock row`() {
         val rows = internal()
 
-        assertThat(rows).hasSize(23)
-        assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..23).map { it * 10 })
-        assertThat(rows.filter { !it["enabled"].asBoolean() }.map { it["id"].asText() })
-            .containsExactly(
-                "bedrock/us.anthropic.claude-haiku-5-5",
-                "bedrock/us.openai.gpt-6.1-sol"
-            )
+        // V182 가 Bedrock 행 셋(순번 10 · 140 · 150)을 지웠다(ARTEL-1439). 남은 행은 순번을 그대로 갖는다.
+        assertThat(rows).hasSize(20)
+        assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..23).map { it * 10 } - listOf(10, 140, 150))
+        assertThat(rows.map { it["id"].asText() }).noneMatch { it.startsWith("bedrock/") }
+        assertThat(rows.filter { !it["enabled"].asBoolean() }).isEmpty()
     }
 
     @Test
@@ -240,44 +238,13 @@ class LlmModelCatalogIntegrationTest {
     fun `the internal endpoint carries the full spec, disabled rows included`() {
         val byId = internal().associateBy { it["id"].asText() }
 
-        val haiku = byId.getValue("bedrock/us.anthropic.claude-haiku-5-5")
-        assertThat(haiku["label"].asText()).isEqualTo("Claude Haiku 5.5 (AWS Bedrock)")
-        assertThat(haiku["provider"].asText()).isEqualTo("anthropic")
-        assertThat(haiku["supportsStrictJson"].asBoolean()).isFalse()
-        assertThat(haiku["maxInputTokens"].asInt()).isEqualTo(872_000)
-        assertThat(haiku["inputModalities"].map { it.asText() }).containsExactly("text", "image")
-        assertThat(haiku["reasoning"]["kind"].asText()).isEqualTo("effort")
-        assertThat(haiku["reasoning"]["efforts"].map { it.asText() }).containsExactly("max", "xhigh", "high", "medium", "low")
-        assertThat(haiku["reasoning"]["minTokens"].isNull).isTrue()
-        assertThat(haiku["reasoning"]["defaultTokens"].isNull).isTrue()
-        assertThat(haiku["pricing"]["inputPerMtok"].asDouble()).isEqualTo(0.10)
-        assertThat(haiku["pricing"]["cacheWritePerMtok"].asDouble()).isEqualTo(0.125)
-        assertThat(haiku["pricing"]["asOf"].asText()).isEqualTo("2026-10-13")
-        assertThat(haiku["pricing"]["longContextThresholdTokens"].asInt()).isEqualTo(100_000)
-        assertThat(haiku["enabled"].asBoolean()).isFalse()
-        assertThat(haiku["sortOrder"].asInt()).isEqualTo(140)
+        assertThat(byId.keys).noneMatch { it.startsWith("bedrock/") }
 
-        val sol = byId.getValue("bedrock/us.openai.gpt-6.1-sol")
+        val sol = byId.getValue("openai/gpt-6.1-sol")
         assertThat(sol["maxInputTokens"].asInt()).isEqualTo(922_000)
-        assertThat(sol["supportsStrictJson"].asBoolean()).isFalse()
         assertThat(sol["inputModalities"].map { it.asText() }).containsExactly("text", "image", "file")
         assertThat(sol["reasoning"]["efforts"].map { it.asText() }).containsExactly("max", "xhigh", "high", "medium", "low")
-        assertThat(sol["pricing"].isNull).isTrue()
-
-        // 켜진 채로 시드되는 유일한 Bedrock 행이고, effort 가 아니라 token 예산으로 추론한다.
-        val haiku45 = byId.getValue("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
-        assertThat(haiku45["enabled"].asBoolean()).isTrue()
-        assertThat(haiku45["supportsStrictJson"].asBoolean()).isTrue()
-        assertThat(haiku45["maxInputTokens"].asInt()).isEqualTo(183_616)
-        assertThat(haiku45["reasoning"]["kind"].asText()).isEqualTo("max_tokens")
-        assertThat(haiku45["reasoning"]["efforts"].isNull).isTrue()
-        assertThat(haiku45["reasoning"]["minTokens"].asInt()).isEqualTo(1_024)
-        assertThat(haiku45["reasoning"]["maxTokens"].asInt()).isEqualTo(32_000)
-        assertThat(haiku45["reasoning"]["defaultTokens"].asInt()).isEqualTo(4_096)
-        assertThat(haiku45["pricing"]["inputPerMtok"].asDouble()).isEqualTo(1.00)
-        assertThat(haiku45["pricing"]["cacheWritePerMtok"].asDouble()).isEqualTo(1.25)
-        assertThat(haiku45["pricing"].has("longContextThresholdTokens")).isFalse()
-        assertThat(haiku45["sortOrder"].asInt()).isEqualTo(10)
+        assertThat(sol["reasoning"]["defaultTokens"].isNull).isTrue()
 
         val qwen = byId.getValue("qwen/qwen3.7-max")
         assertThat(qwen["reasoning"].isNull).isTrue()
@@ -288,10 +255,10 @@ class LlmModelCatalogIntegrationTest {
     @Test
     fun `qa-models lists enabled rows only, in sort order, and follows a toggle`() {
         val before = platformQaModels()
-        assertThat(before.map { it["id"].asText() }).hasSize(13)
-            .doesNotContain("bedrock/us.anthropic.claude-haiku-5-5", "bedrock/us.openai.gpt-6.1-sol", "claude/claude-opus-5-5")
-        assertThat(before.first()["id"].asText()).isEqualTo("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
-        assertThat(before.first()["reasoning"]["kind"].asText()).isEqualTo("max_tokens")
+        // 공용 key 로 부를 수 있는 켜진 행: OpenRouter 12. `claude/` 는 공용 Claude key 가 없어 빠지고 `gpt/` 는 공용 key 가 없다.
+        assertThat(before.map { it["id"].asText() }).hasSize(12).doesNotContain("claude/claude-opus-5-5", "gpt/gpt-6-luna")
+        assertThat(before.first()["id"].asText()).isEqualTo("openai/gpt-6.1-sol")
+        assertThat(before.first()["reasoning"]["kind"].asText()).isEqualTo("effort")
         assertThat(before.first()["reasoning"].has("defaultTokens")).isFalse()
 
         val gemini = before.first { it["id"].asText() == "google/gemini-3.8-flash" }
@@ -302,24 +269,21 @@ class LlmModelCatalogIntegrationTest {
         assertThat(gemini["reasoning"]["kind"].asText()).isEqualTo("effort")
 
         call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"google/gemma-4-31b-it:free","enabled":false}""")
-        call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"bedrock/us.openai.gpt-6.1-sol","enabled":true}""")
 
         val after = platformQaModels().map { it["id"].asText() }
-        assertThat(after).doesNotContain("google/gemma-4-31b-it:free").contains("bedrock/us.openai.gpt-6.1-sol")
-        assertThat(after).hasSize(13)
+        assertThat(after).doesNotContain("google/gemma-4-31b-it:free").hasSize(11)
     }
 
     @Test
     fun `admin lists every row with its route and records who changed it`() {
         val rows = call(adminSession, HttpMethod.GET, "/api/admin/llm-models")
-        assertThat(rows.size()).isEqualTo(23)
-        val bedrock = rows.first { it["id"].asText() == "bedrock/us.openai.gpt-6.1-sol" }
-        assertThat(bedrock["route"].asText()).isEqualTo("bedrock")
-        assertThat(bedrock["provider"].asText()).isEqualTo("openai")
-        assertThat(bedrock["enabled"].asBoolean()).isFalse()
-        assertThat(bedrock["supportsVision"].asBoolean()).isTrue()
-        assertThat(bedrock["maxInputTokens"].asInt()).isEqualTo(922_000)
-        assertThat(bedrock["updatedAt"].asText()).isNotBlank()
+        assertThat(rows.size()).isEqualTo(20)
+        assertThat(rows.map { it["route"].asText() }).doesNotContain("bedrock")
+        val sol = rows.first { it["id"].asText() == "openai/gpt-6.1-sol" }
+        assertThat(sol["provider"].asText()).isEqualTo("openai")
+        assertThat(sol["supportsVision"].asBoolean()).isTrue()
+        assertThat(sol["maxInputTokens"].asInt()).isEqualTo(922_000)
+        assertThat(sol["updatedAt"].asText()).isNotBlank()
         assertThat(rows.first { it["id"].asText() == "openai/gpt-6-luna" }["route"].asText()).isEqualTo("openrouter")
         // `anthropic/` 는 OpenRouter 경로이고, `claude/` 만 Claude API 경로다.
         assertThat(rows.first { it["id"].asText() == "anthropic/claude-opus-5.5" }["route"].asText()).isEqualTo("openrouter")

@@ -52,7 +52,7 @@ class QaRequestModelValidationIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
-        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = TRUE, updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(userId)
     }
@@ -65,10 +65,10 @@ class QaRequestModelValidationIntegrationTest {
 
     @Test
     fun `a disabled model is 400 llm_model_disabled`(): Unit = runBlocking {
-        databaseClient.sql("UPDATE llm_model SET enabled = FALSE WHERE id = 'google/gemma-4-31b-it:free'")
+        databaseClient.sql("UPDATE llm_model SET enabled = FALSE WHERE id IN ('google/gemma-4-31b-it:free', 'gpt/gpt-6.1-sol')")
             .fetch().rowsUpdated().awaitSingle()
 
-        for (model in listOf("google/gemma-4-31b-it:free", "bedrock/us.openai.gpt-6.1-sol")) {
+        for (model in listOf("google/gemma-4-31b-it:free", "gpt/gpt-6.1-sol")) {
             assertRefused("/api/qa-tries", """{"testScenarioId":"1","gameInstanceId":"1","model":"$model"}""", "llm_model_disabled", model)
             assertRefused("/api/qa-runs", """{"testRunId":"1","gameInstanceId":"1","model":"$model"}""", "llm_model_disabled", model)
         }
@@ -77,8 +77,7 @@ class QaRequestModelValidationIntegrationTest {
     @Test
     fun `an enabled model passes the check and the request goes on`() {
         // 확인을 통과하면 다음 단계(없는 시나리오)에서 멈춘다. model 코드가 아니면 확인을 지난 것이다.
-        // Bedrock 행 중 Haiku 4.5 는 켜진 채로 시드된다.
-        for (model in listOf("openai/gpt-6-luna", "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")) {
+        for (model in listOf("openai/gpt-6-luna", "claude/claude-haiku-5-5")) {
             val (_, body) = post("/api/qa-tries", """{"testScenarioId":"1","gameInstanceId":"1","model":"$model"}""")
             assertThat(body).describedAs(model).doesNotContain("llm_model_unknown").doesNotContain("llm_model_disabled")
         }

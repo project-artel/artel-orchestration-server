@@ -13,7 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
 import reactor.netty.http.client.HttpClient
 
-/** 확인 결과의 `error` 상한. [BedrockRuntimeClient] 와 같다. */
+/** 확인 결과의 `error` 상한. */
 private const val MAX_ERROR_LENGTH = 300
 
 /** `GET /v1/models` 한 번에 받을 수 있는 최대 개수. Anthropic API 의 `limit` 상한이 1000 이다. */

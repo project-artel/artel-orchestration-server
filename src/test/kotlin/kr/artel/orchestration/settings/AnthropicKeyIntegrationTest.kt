@@ -134,7 +134,7 @@ class AnthropicKeyIntegrationTest {
     @AfterEach
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
-        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = TRUE, updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
@@ -158,7 +158,8 @@ class AnthropicKeyIntegrationTest {
         val internal = internalSettings()
         assertThat(internal["anthropicApiKey"].asText()).isEqualTo(VALID_KEY)
         assertThat(internal["openrouterApiKey"].isNull).isTrue()
-        assertThat(internal["bedrockApiKey"].isNull).isTrue()
+        // Bedrock key 칸은 걷었다(ARTEL-1439).
+        assertThat(internal.has("bedrockApiKey")).isFalse()
 
         val storedValue = databaseClient.sql("SELECT setting_value FROM platform_setting WHERE setting_key = 'anthropic.api_key'")
             .map { row, _ -> row.get("setting_value", String::class.java)!! }

@@ -135,9 +135,6 @@ class AdminUserAndPasswordIntegrationTest {
                 Triple(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"sk-or-v1-should-not-be-stored"}"""),
                 Triple(HttpMethod.POST, "/api/admin/settings/llm/check", null),
                 Triple(HttpMethod.POST, "/api/admin/settings/llm/invalidate-cache", null),
-                Triple(HttpMethod.GET, "/api/admin/settings/bedrock", null),
-                Triple(HttpMethod.PUT, "/api/admin/settings/bedrock", """{"apiKey":"bedrock-key-should-not-be-stored"}"""),
-                Triple(HttpMethod.POST, "/api/admin/settings/bedrock/check", null),
                 Triple(HttpMethod.GET, "/api/admin/settings/anthropic", null),
                 Triple(HttpMethod.PUT, "/api/admin/settings/anthropic", """{"apiKey":"sk-ant-key-should-not-be-stored"}"""),
                 Triple(HttpMethod.POST, "/api/admin/settings/anthropic/check", null)

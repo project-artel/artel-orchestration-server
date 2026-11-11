@@ -57,7 +57,7 @@ class ProviderKeyWithoutSecretsKeyIntegrationTest {
 
     @Test
     fun `saving any provider key is 409 secrets_key_missing`(): Unit = runBlocking {
-        for (path in listOf("/api/admin/settings/bedrock", "/api/admin/settings/llm", "/api/admin/settings/anthropic")) {
+        for (path in listOf("/api/admin/settings/llm", "/api/admin/settings/anthropic")) {
             // `sk-ant-` 로 시작해야 Claude API key 의 형식 확인을 지나 암호화 단계까지 간다.
             val (status, body) = put(path, """{"apiKey":"sk-ant-key-that-cannot-be-stored-0123456789"}""")
             assertThat(status).describedAs(path).isEqualTo(409)
