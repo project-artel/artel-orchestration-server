@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactor.awaitSingle
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -16,6 +17,7 @@ import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
+import org.springframework.web.reactive.socket.WebSocketSession
 
 /**
  * Entry point for a future QA Agent adapter. The persisted outbound log ID is
@@ -32,6 +34,7 @@ class QaActionDispatchService(
     private val transactionalOperator: TransactionalOperator,
     private val sdkBridge: QaSdkBridgeService,
     private val delivery: SdkActionDelivery,
+    private val inputPreflight: QaInputPreflight,
 ) {
     private val logger = LoggerFactory.getLogger(QaActionDispatchService::class.java)
 
@@ -54,8 +57,21 @@ class QaActionDispatchService(
         val qaTry = tryRepository.findById(qaTryId)
             ?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
             ?: throw IllegalStateException("QA try is not active")
+        val runConfig = qaTry.runConfig.asString()
+        val inputMode = inputModeOf(runConfig, objectMapper)
+        val sdkAction = ActionResponseDto(id = 0, actions = actions, inputMode = inputMode.wire)
+        val sdkPayload = objectMapper.valueToTree<JsonNode>(sdkAction)
 
-        val rejections = functionRejections(qaTry.runConfig.asString(), actions)
+        var rejections = functionRejections(runConfig, actions)
+        var inputSession: WebSocketSession? = null
+        if (rejections.isEmpty()) {
+            try {
+                // 재연결한 구 SDK가 os 필드를 무시해 virtual로 실행하지 않도록 session마다 다시 확인한다.
+                inputSession = inputPreflight.requireAvailable(qaTry.gameInstanceId, inputMode)
+            } catch (error: ApiException) {
+                rejections = actions.associate { it.id to "OS input is unavailable: ${error.message}" }
+            }
+        }
         if (rejections.isNotEmpty()) {
             // SDK 로 보내지 않는다. 배치 전체를 거절하고, 이유를 agent 에게 `ACTION_RESULT` 실패로 돌려준다.
             // 던지지 않는 것은 던진 예외가 수신 체인에서 삼켜져 agent 가 답을 기다리다 멈추기 때문이다.
@@ -85,7 +101,7 @@ class QaActionDispatchService(
                     payload = actionsPayload
                 )
                 if (!inbound.inserted) return@executeAndAwait null
-                val outbound = insertOutbound(qaTryId, agentMessageId, message, actionsPayload)
+                val outbound = insertOutbound(qaTryId, agentMessageId, message, sdkPayload)
                 val outboundResponse = logService.response(outbound)
                 Triple(inbound, outboundResponse, requireNotNull(outbound.id))
             } ?: return false
@@ -94,7 +110,9 @@ class QaActionDispatchService(
             logService.publish(QaLogAppendResult(outboundResponse, true))
             val instanceId = qaTry.gameInstanceId.toString()
             val pendingAhead = sessionManager.pendingOutbound(instanceId)
-            val registered = delivery.send(instanceId, qaTryId, ActionResponseDto(id = outerId, actions = actions), deliveryDeadline)
+            val registered = delivery.send(
+                instanceId, qaTryId, sdkAction.copy(id = outerId), deliveryDeadline, expectedSession = inputSession,
+            )
             logger.info(
                 "SDK ACTION 전달 등록 [qaTryId={}, requestId={}, registered={}, pendingAhead={}]",
                 qaTryId, outerId, registered, pendingAhead
@@ -175,7 +193,7 @@ class QaActionDispatchService(
                 id, qa_try_id, message_id, correlation_id, direction, type, message, payload
             )
             SELECT id, :qaTryId, CAST(id AS VARCHAR), :correlationId,
-                   'ORCHE_TO_SDK', 'ACTION', :message, CAST(:payload AS JSONB)
+                   'ORCHE_TO_SDK', 'ACTION', :message, CAST(:payload AS JSONB) || jsonb_build_object('id', id)
             FROM allocated
             RETURNING id
             """.trimIndent()

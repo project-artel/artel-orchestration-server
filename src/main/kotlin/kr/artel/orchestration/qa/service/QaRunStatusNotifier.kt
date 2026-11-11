@@ -34,7 +34,8 @@ class QaRunStatusNotifier(
     private val runRepository: QaRunRepository,
     private val testRunRepository: TestRunRepository,
     private val tryRepository: QaTryRepository,
-    private val clock: Clock
+    private val clock: Clock,
+    private val inputPreflight: QaInputPreflight,
 ) {
     private val logger: Logger = LoggerFactory.getLogger(QaRunStatusNotifier::class.java)
 
@@ -47,8 +48,10 @@ class QaRunStatusNotifier(
         notify(qaTryId, gameInstanceId, qaRunId, RUNNING, outcome = null)
 
     /** qa_try 가 종단됐다. [outcome] 은 `PASSED` · `FAILED` · `CANCELLED` · `ERROR` 중 하나다. */
-    suspend fun finished(qaTryId: Long, gameInstanceId: Long, qaRunId: Long?, outcome: String) =
+    suspend fun finished(qaTryId: Long, gameInstanceId: Long, qaRunId: Long?, outcome: String) {
+        inputPreflight.forget(gameInstanceId)
         notify(qaTryId, gameInstanceId, qaRunId, FINISHED, outcome)
+    }
 
     /**
      * SDK 가 (재)연결됐을 때, 그 game instance 에 활성 qa_try 가 있으면 지금 상태를 다시 보낸다.

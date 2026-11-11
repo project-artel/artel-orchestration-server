@@ -747,7 +747,8 @@ class GameFunctionsIntegrationTest {
         }
         val dispatch = QaActionDispatchService(
             qaTryRepository, qaLogRepository, qaLogService, databaseClient, sessionManager,
-            objectMapper, failingTransaction, bridge, actionDelivery
+            objectMapper, failingTransaction, bridge, actionDelivery,
+            org.mockito.Mockito.mock(kr.artel.orchestration.qa.service.QaInputPreflight::class.java)
         )
         val frame = actionFrame(tryId, UUID.randomUUID().toString(),
             """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}""")

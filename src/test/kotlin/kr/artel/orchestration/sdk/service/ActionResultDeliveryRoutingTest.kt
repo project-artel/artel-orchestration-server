@@ -7,6 +7,8 @@ import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
+import kr.artel.orchestration.qa.service.QaInputPreflight
+import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.sdk.dto.ActionItemDto
 import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import kr.artel.orchestration.sdk.service.handler.ActionAcceptedMessageHandler
@@ -32,11 +34,12 @@ class ActionResultDeliveryRoutingTest {
     private val mapper = jacksonObjectMapper()
     private val sessions = SessionManager(mapper)
     private val tries = mock(QaTryRepository::class.java)
-    private val delivery = SdkActionDelivery(sessions, tries, mapper)
+    private val delivery = SdkActionDelivery(sessions, tries, mapper, mock(QaExecutionFailureService::class.java))
     private val scans = mock(ScanResultRouter::class.java)
     private val captures = mock(ScreenCaptureResultRouter::class.java)
     private val bridge = mock(QaSdkBridgeService::class.java)
-    private val handler = ActionResultMessageHandler(scans, captures, bridge, mapper, delivery)
+    private val inputPreflight = mock(QaInputPreflight::class.java)
+    private val handler = ActionResultMessageHandler(scans, captures, bridge, mapper, delivery, inputPreflight)
     private val acknowledgements = ActionAcceptedMessageHandler(mapper, delivery)
     private val socket = mock(WebSocketSession::class.java)
     private val processId = "11111111-1111-1111-1111-111111111111"
@@ -56,6 +59,34 @@ class ActionResultDeliveryRoutingTest {
         delivery.send("4", 11, ActionResponseDto(id = 45228, actions = listOf(
             ActionItemDto(id = 1, method = "reset_game", params = emptyList()),
         )))
+    }
+
+    @Test
+    fun `OS 확인 뒤 session이 legacy SDK로 바뀌면 검증한 session에 묶인 전송을 거절한다`(): Unit = runBlocking {
+        sessions.removeSession("4", socket)
+        val replacement = mock(WebSocketSession::class.java)
+        val replacementMessages = mutableListOf<String>()
+        sessions.register("4", replacement)!!.subscribe { replacementMessages += it }
+
+        val registered = delivery.send("4", 11, ActionResponseDto(
+            id = 45229, actions = listOf(ActionItemDto(1, method = "key_down", params = listOf("A"))), inputMode = "os",
+        ), expectedSession = socket)
+
+        assertThat(registered).isFalse()
+        assertThat(replacementMessages).isEmpty()
+        assertThat(sessions.sendAction("4", ActionResponseDto(id = 45230, actions = emptyList()), expectedSession = socket)).isFalse()
+        assertThat(replacementMessages).isEmpty()
+    }
+
+    @Test
+    fun `입력 preflight 결과는 QA delivery에 넘기지 않는다`(): Unit = runBlocking {
+        val result = result(processId, action = "configure_input")
+        `when`(inputPreflight.handle("4", result, socket)).thenReturn(true)
+
+        handler.handle("4", result, socket)
+
+        verifyNoInteractions(scans, captures, bridge)
+        assertThat(delivery.pendingCount()).isEqualTo(1)
     }
 
     @Test

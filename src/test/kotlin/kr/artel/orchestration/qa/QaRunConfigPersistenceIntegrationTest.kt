@@ -73,6 +73,9 @@ class QaRunConfigPersistenceIntegrationTest {
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
+    @Autowired private lateinit var inputPreflight: kr.artel.orchestration.qa.service.QaInputPreflight
+    @Autowired private lateinit var sessionManager: kr.artel.orchestration.sdk.service.SessionManager
+    @Autowired private lateinit var actionDispatch: kr.artel.orchestration.qa.service.QaActionDispatchService
 
     private val resolvedConfig =
         """
@@ -167,7 +170,7 @@ class QaRunConfigPersistenceIntegrationTest {
         // Agent 의 침묵과 무관하고, 빠지면 그 런이 어느 arm 이었는지 알 수 없다(ARTEL-256).
         val stored = objectMapper.readTree(running.runConfig.asString())
         assertThat(stored.fieldNames().asSequence().toList())
-            .containsExactlyInAnyOrder("knowledge_mode", "content_map_mode")
+            .containsExactlyInAnyOrder("knowledge_mode", "content_map_mode", "input_mode")
         assertThat(stored.path("knowledge_mode").asText()).isEqualTo("learning")
         assertThat(stored.path("content_map_mode").asText()).isEqualTo("on")
     }
@@ -448,7 +451,8 @@ class QaRunConfigPersistenceIntegrationTest {
         )
 
         val stored = objectMapper.readTree(started.tries.single().runConfig.asString())
-        assertThat(stored.fieldNames().asSequence().toList()).isEmpty()
+        assertThat(stored.fieldNames().asSequence().toList()).containsExactly("input_mode")
+        assertThat(stored.path("input_mode").asText()).isEqualTo("virtual")
     }
 
     /**
@@ -613,6 +617,110 @@ class QaRunConfigPersistenceIntegrationTest {
     }
 
     // ----------------------------------------------------------------- seeding
+
+    @Test
+    fun `OS 입력 모드는 모든 try와 run에 저장되고 Agent 스냅샷이 바꾸지 못한다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId)).id!!
+        val started = persistence.createRunStarting(
+            ids.testRunId, ids.instanceId, ids.ownerId, listOf(ids.scenarioId, second),
+            inputMode = kr.artel.orchestration.qa.service.QaInputMode.OS,
+        )
+        assertThat(objectMapper.readTree(started.qaRun.runConfig.asString()).path("input_mode").asText()).isEqualTo("os")
+        assertThat(started.tries).allSatisfy {
+            assertThat(objectMapper.readTree(it.runConfig.asString()).path("input_mode").asText()).isEqualTo("os")
+        }
+        val agentConfig = objectMapper.readTree("""{"input_mode":"virtual","model":"test"}""")
+        val running = persistence.attachRunAndMarkRunning(started.qaRun, started.tries.first().id!!, "input-session", agentConfig)
+        assertThat(objectMapper.readTree(running.runConfig.asString()).path("input_mode").asText()).isEqualTo("os")
+        val first = qaTryRepository.findById(started.tries.first().id!!)!!
+        assertThat(objectMapper.readTree(first.runConfig.asString()).path("input_mode").asText()).isEqualTo("os")
+        val pending = qaTryRepository.findById(started.tries.last().id!!)!!
+        assertThat(objectMapper.readTree(pending.runConfig.asString()).path("input_mode").asText()).isEqualTo("os")
+    }
+
+    @Test
+    fun `단일 시나리오도 OS 입력 모드를 세션 부착 뒤에 유지한다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) = persistence.createStarting(
+            ids.scenarioId, ids.instanceId, ids.ownerId, QaKnowledgeSettings(),
+            inputMode = kr.artel.orchestration.qa.service.QaInputMode.OS,
+        )
+        val (running, _) = persistence.attachAndMarkRunning(
+            starting, "os-single-session", objectMapper.readTree("""{"input_mode":"virtual"}"""),
+        )
+        assertThat(objectMapper.readTree(running.runConfig.asString()).path("input_mode").asText()).isEqualTo("os")
+    }
+
+    @Test
+    fun `같은 SDK 연결이어도 다음 run 시작은 철회된 OS 권한을 다시 확인한다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val instanceId = ids.instanceId.toString()
+        val socket = org.mockito.Mockito.mock(org.springframework.web.reactive.socket.WebSocketSession::class.java)
+        var checks = 0
+        sessionManager.register(instanceId, socket)!!.subscribe { text ->
+            val message = objectMapper.readTree(text)
+            if (message.path("actions").firstOrNull()?.path("method")?.asText() == "configure_input") {
+                checks += 1
+                val requestId = message.path("id").asLong()
+                inputPreflight.handle(instanceId,
+                    """{"requestId":$requestId,"results":[{"id":$requestId,"success":${checks == 1},"error":"permission denied"}]}""",
+                    socket)
+            }
+        }
+        try {
+            inputPreflight.requireAvailable(ids.instanceId, kr.artel.orchestration.qa.service.QaInputMode.OS, force = true)
+            inputPreflight.requireAvailable(ids.instanceId, kr.artel.orchestration.qa.service.QaInputMode.OS)
+            assertThat(checks).isEqualTo(1)
+            val failure = runCatching {
+                inputPreflight.requireAvailable(ids.instanceId, kr.artel.orchestration.qa.service.QaInputMode.OS, force = true)
+            }.exceptionOrNull() as kr.artel.orchestration.common.error.ApiException
+            assertThat(failure.code).isEqualTo("sdk_input_unavailable")
+            assertThat(checks).isEqualTo(2)
+            inputPreflight.forget(ids.instanceId)
+            val afterCleanup = runCatching {
+                inputPreflight.requireAvailable(ids.instanceId, kr.artel.orchestration.qa.service.QaInputMode.OS)
+            }.exceptionOrNull() as kr.artel.orchestration.common.error.ApiException
+            assertThat(afterCleanup.code).isEqualTo("sdk_input_unavailable")
+            assertThat(checks).isEqualTo(3)
+        } finally {
+            inputPreflight.forget(ids.instanceId)
+            sessionManager.removeSession(instanceId, socket)
+        }
+    }
+
+    @Test
+    fun `QA ACTION은 Agent가 보낸 값 대신 저장된 OS 모드를 SDK와 감사 로그에 전달한다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) = persistence.createStarting(
+            ids.scenarioId, ids.instanceId, ids.ownerId, QaKnowledgeSettings(),
+            inputMode = kr.artel.orchestration.qa.service.QaInputMode.OS,
+        )
+        val instanceId = ids.instanceId.toString()
+        val socket = org.mockito.Mockito.mock(org.springframework.web.reactive.socket.WebSocketSession::class.java)
+        val delivered = mutableListOf<com.fasterxml.jackson.databind.JsonNode>()
+        sessionManager.register(instanceId, socket)!!.subscribe { text ->
+            val message = objectMapper.readTree(text)
+            if (message.path("actions").firstOrNull()?.path("method")?.asText() == "configure_input") {
+                val requestId = message.path("id").asLong()
+                inputPreflight.handle(instanceId,
+                    """{"requestId":$requestId,"results":[{"id":$requestId,"success":true}]}""", socket)
+            } else delivered.add(message)
+        }
+        try {
+            assertThat(actionDispatch.dispatch(starting.id!!, "input-forwarding", null, objectMapper.readTree(
+                """{"inputMode":"virtual","actions":[{"id":1,"jsonrpc":"2.0","method":"key_down","params":["A"]}]}""",
+            ))).isTrue()
+            assertThat(delivered.single().path("inputMode").asText()).isEqualTo("os")
+            val audit = qaLogRepository.findAll().toList().single { it.qaTryId == starting.id && it.direction == "ORCHE_TO_SDK" }
+            val payload = objectMapper.readTree(audit.payload.asString())
+            assertThat(payload.path("inputMode").asText()).isEqualTo("os")
+            assertThat(payload.path("id").asLong()).isEqualTo(audit.id)
+        } finally {
+            inputPreflight.forget(ids.instanceId)
+            sessionManager.removeSession(instanceId, socket)
+        }
+    }
 
     private data class SeedIds(
         val ownerId: Long,

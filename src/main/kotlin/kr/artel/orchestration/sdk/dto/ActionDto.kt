@@ -11,6 +11,8 @@ data class ActionResponseDto(
     val actions: List<ActionItemDto>,
     @get:JsonInclude(JsonInclude.Include.NON_NULL)
     val delivery: ActionDeliveryDto? = null,
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val inputMode: String? = null,
 )
 
 data class ActionDeliveryDto(val processId: String, val expiresAtUnixMs: Long)
