@@ -53,6 +53,13 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.TESTCASE_WRITE),
+    // 프로젝트별 TC 번호(Home 의 TC-007). MCP 는 TC 를 DB id 대신 이 번호로 보이고 받는다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-case-identifiers", McpScope.TESTCASE_READ),
+    // TC 폴더 — 사용자가 원할 때 MCP 가 폴더를 만들고 TC 를 넣는다. 폴더를 지우거나 TC 를 빼는 것은 화면에서 한다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-case-folders", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-case-folders", McpScope.TESTCASE_WRITE),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-case-folders/{folderId}/items", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-case-folders/{folderId}/items", McpScope.TESTCASE_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds/{buildId}/game-functions", McpScope.MACRO_READ),
