@@ -285,6 +285,10 @@ artel:
   openai:
     base-url: ${ARTEL_OPENAI_BASE_URL:https://api.openai.com}
     check-timeout: ${ARTEL_OPENAI_CHECK_TIMEOUT:PT15S}
+  model-discovery:
+    openrouter-api-key: ${ARTEL_MODEL_DISCOVERY_OPENROUTER_API_KEY:}
+    openai-api-key: ${ARTEL_MODEL_DISCOVERY_OPENAI_API_KEY:}
+    claude-api-key: ${ARTEL_MODEL_DISCOVERY_CLAUDE_API_KEY:}
   # 관리 화면에서 넣은 비밀(OpenRouter, Bedrock, Claude API key)을 AES-GCM 으로 잠그는 키의 원천. 32 글자 이상이고
   # 예시 문구를 담으면 기동하지 않는다. 비우면 관리 화면에서 key 를 저장할 수 없다. 바꾸면 저장된 값을 열 수 없어
   # key 를 다시 넣어야 한다.
