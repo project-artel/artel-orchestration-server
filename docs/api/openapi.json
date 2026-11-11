@@ -1753,6 +1753,140 @@
         }
       }
     },
+    "/api/projects/{projectId}/llm-keys/{service}": {
+      "put": {
+        "tags": [
+          "project-llm-key-controller"
+        ],
+        "operationId": "register",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserLlmKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "project-llm-key-controller"
+        ],
+        "operationId": "remove_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/llm-keys/{service}/link": {
+      "put": {
+        "tags": [
+          "project-llm-key-controller"
+        ],
+        "operationId": "link",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "project-llm-key-controller"
+        ],
+        "operationId": "unlink",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/issues/{issueId}/categories": {
       "put": {
         "tags": [
@@ -3834,7 +3968,7 @@
         ],
         "summary": "SDK 인스턴스 등록",
         "description": "sdkUuid로 인스턴스를 찾거나 만들고, 보고된 게임 버전으로 게임 빌드를 찾거나 만든다.",
-        "operationId": "register",
+        "operationId": "register_1",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3898,7 +4032,7 @@
         ],
         "summary": "근거 문서 등록",
         "description": "올라온 문서의 헤더를 서버가 직접 읽어 content_map 을 만들거나 갱신한다. 같은 내용이 다시 오면 기존 등록을 그대로 돌려준다.",
-        "operationId": "register_1",
+        "operationId": "register_2",
         "parameters": [
           {
             "name": "gameBuildId",
@@ -4382,6 +4516,49 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-scenario/{testScenarioId}/review": {
+      "post": {
+        "tags": [
+          "project-test-scenario-controller"
+        ],
+        "operationId": "review_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testScenarioId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -5093,6 +5270,49 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/{caseId}/review": {
+      "post": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "review_2",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -6494,7 +6714,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_13",
+        "operationId": "list_14",
         "parameters": [
           {
             "name": "projectId",
@@ -6857,7 +7077,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_18",
+        "operationId": "list_19",
         "parameters": [
           {
             "name": "projectId",
@@ -6892,7 +7112,7 @@
         ],
         "summary": "기획서 등록",
         "description": "올라온 객체를 검증하고 새 버전으로 기록한다. 이전 버전은 남는다.",
-        "operationId": "register_2",
+        "operationId": "register_3",
         "parameters": [
           {
             "name": "projectId",
@@ -7123,7 +7343,7 @@
         "tags": [
           "project-agent-controller"
         ],
-        "operationId": "list_19",
+        "operationId": "list_20",
         "parameters": [
           {
             "name": "projectId",
@@ -7908,7 +8128,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_21",
+        "operationId": "list_22",
         "responses": {
           "200": {
             "description": "OK",
@@ -8749,7 +8969,7 @@
         "tags": [
           "admin-llm-model-controller"
         ],
-        "operationId": "list_22",
+        "operationId": "list_23",
         "responses": {
           "200": {
             "description": "OK",
@@ -9750,6 +9970,37 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/thumbnail": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "getQaRunThumbnail",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/changes": {
       "get": {
         "tags": [
@@ -9841,6 +10092,17 @@
           "qa-model-controller"
         ],
         "operationId": "list_3",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -10054,6 +10316,40 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-scenario/review-queue": {
+      "get": {
+        "tags": [
+          "project-test-scenario-controller"
+        ],
+        "operationId": "reviewQueue",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ScenarioReviewItem"
+                  }
                 }
               }
             }
@@ -10540,6 +10836,40 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseReviewStatusOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/review-queue": {
+      "get": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "reviewQueue_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CaseReviewItem"
+                  }
                 }
               }
             }
@@ -11271,6 +11601,40 @@
         }
       }
     },
+    "/api/projects/{projectId}/llm-keys": {
+      "get": {
+        "tags": [
+          "project-llm-key-controller"
+        ],
+        "operationId": "list_12",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectLlmKeySummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/knowledge/{knowledgeId}": {
       "get": {
         "tags": [
@@ -11357,7 +11721,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_12",
+        "operationId": "list_13",
         "parameters": [
           {
             "name": "projectId",
@@ -11791,7 +12155,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_14",
+        "operationId": "list_15",
         "parameters": [
           {
             "name": "projectId",
@@ -11866,7 +12230,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_15",
+        "operationId": "list_16",
         "parameters": [
           {
             "name": "projectId",
@@ -12003,7 +12367,7 @@
         ],
         "summary": "빌드 하나로 돈 프로젝트의 QA run 목록",
         "description": "새 것이 앞에 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
-        "operationId": "list_16",
+        "operationId": "list_17",
         "parameters": [
           {
             "name": "projectId",
@@ -12097,7 +12461,7 @@
         ],
         "summary": "등록된 macro 목록",
         "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
-        "operationId": "list_17",
+        "operationId": "list_18",
         "parameters": [
           {
             "name": "projectId",
@@ -12856,7 +13220,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_20",
+        "operationId": "list_21",
         "responses": {
           "200": {
             "description": "OK",
@@ -13312,6 +13676,7 @@
         "required": [
           "payload",
           "projectId",
+          "reviewStatus",
           "testScenarioId"
         ],
         "type": "object",
@@ -13326,6 +13691,9 @@
           },
           "payload": {
             "$ref": "#/components/schemas/ScenarioDraft"
+          },
+          "reviewStatus": {
+            "type": "string"
           }
         }
       },
@@ -14083,6 +14451,9 @@
           "reviewStatus": {
             "type": "string"
           },
+          "reviewRequestedBy": {
+            "type": "string"
+          },
           "observe": {
             "type": "array",
             "items": {
@@ -14371,6 +14742,14 @@
             "type": "string"
           },
           "problem": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateUserLlmKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
             "type": "string"
           }
         }
@@ -15468,14 +15847,6 @@
           }
         }
       },
-      "UpdateUserLlmKeyRequest": {
-        "type": "object",
-        "properties": {
-          "apiKey": {
-            "type": "string"
-          }
-        }
-      },
       "UserLlmKeyResponse": {
         "required": [
           "keyHint",
@@ -16470,7 +16841,8 @@
             "type": "string",
             "enum": [
               "platform",
-              "user"
+              "user",
+              "project"
             ]
           }
         }
@@ -17642,6 +18014,26 @@
           }
         }
       },
+      "ReviewDecisionRequest": {
+        "required": [
+          "decision",
+          "expectedUpdatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVE",
+              "REJECT"
+            ]
+          },
+          "expectedUpdatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "TestRunCreateRequest": {
         "required": [
           "unversioned"
@@ -17722,6 +18114,7 @@
       },
       "CommitScenariosRequest": {
         "required": [
+          "draft",
           "scenarios"
         ],
         "type": "object",
@@ -17731,6 +18124,9 @@
             "items": {
               "$ref": "#/components/schemas/ScenarioResult"
             }
+          },
+          "draft": {
+            "type": "boolean"
           }
         }
       },
@@ -17810,6 +18206,12 @@
           },
           "draftOnly": {
             "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
           }
         }
       },
@@ -17836,6 +18238,7 @@
       },
       "DraftSelection": {
         "required": [
+          "draft",
           "draft_ids"
         ],
         "type": "object",
@@ -17845,6 +18248,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "draft": {
+            "type": "boolean"
           }
         }
       },
@@ -22560,6 +22966,7 @@
         "required": [
           "execution_mode",
           "projectId",
+          "reviewStatus",
           "testScenarioId",
           "title"
         ],
@@ -22583,6 +22990,9 @@
               "FREE"
             ]
           },
+          "reviewStatus": {
+            "type": "string"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -22590,6 +23000,93 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ScenarioReviewItem": {
+        "required": [
+          "description",
+          "rejectable",
+          "runs",
+          "steps",
+          "testScenarioId",
+          "title",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "testScenarioId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioReviewRun"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioReviewStep"
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rejectable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ScenarioReviewRun": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ScenarioReviewStep": {
+        "required": [
+          "action"
+        ],
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "testCaseId": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
           }
         }
       },
@@ -23167,6 +23664,9 @@
           "reviewStatus": {
             "type": "string"
           },
+          "reviewRequestedBy": {
+            "type": "string"
+          },
           "observe": {
             "type": "array",
             "items": {
@@ -23186,6 +23686,45 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "CaseReviewItem": {
+        "required": [
+          "expectedValue",
+          "id",
+          "kind",
+          "rejectable",
+          "scene",
+          "step",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rejectable": {
+            "type": "boolean"
           }
         }
       },
@@ -23446,6 +23985,9 @@
             "type": "string"
           },
           "reviewStatus": {
+            "type": "string"
+          },
+          "reviewRequestedBy": {
             "type": "string"
           }
         }
@@ -24055,6 +24597,29 @@
           "joinedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ProjectLlmKeySummary": {
+        "required": [
+          "keyHint",
+          "linked",
+          "ownLink",
+          "service"
+        ],
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "keyHint": {
+            "type": "string"
+          },
+          "linked": {
+            "type": "boolean"
+          },
+          "ownLink": {
+            "type": "boolean"
           }
         }
       },
