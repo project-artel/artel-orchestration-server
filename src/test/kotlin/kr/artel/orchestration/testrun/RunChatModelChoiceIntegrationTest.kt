@@ -251,4 +251,22 @@ class RunChatModelChoiceIntegrationTest {
         Thread.sleep(800)
         assertThat(openBodies).hasSize(opened)
     }
+
+    @Test
+    fun `기본 모델은 멤버에게만 알려 준다`(): Unit = runBlocking {
+        val (appUserId, token) = issueUser()
+        val (projectId, runId) = memberRun(appUserId)
+        val (_, outsider) = issueUser()
+
+        fun get(cookie: String) = webClient().get()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/default-model")
+            .cookie("artel_access_token", cookie)
+            .exchangeToMono { it.bodyToMono(String::class.java).defaultIfEmpty("").map { text -> it.statusCode().value() to text } }
+            .block(Duration.ofSeconds(5))!!
+
+        val (status, body) = get(token)
+        assertThat(status).isEqualTo(200)
+        assertThat(json(body).has("model")).isTrue()
+        assertThat(get(outsider).first).isEqualTo(404)
+    }
 }

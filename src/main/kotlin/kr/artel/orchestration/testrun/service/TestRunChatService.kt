@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testrun.dto.RunChatCancellation
+import kr.artel.orchestration.testrun.dto.RunChatDefaultModel
 import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
@@ -53,6 +54,7 @@ class TestRunChatService(
     private val runLocks: RunAuthoringLocks,
     private val reviewAbsorbs: kr.artel.orchestration.testscenario.service.ScenarioReviewService,
     private val modelChoices: AuthoringModelChoices,
+    private val featureModels: kr.artel.orchestration.settings.service.FeatureModelService,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -122,6 +124,12 @@ class TestRunChatService(
             answers = message.answers,
             choice = choice,
         )
+    }
+
+    /** 아무것도 고르지 않았을 때 저작이 쓰는 model(ARTEL-1427). 세션을 열 때와 같은 값이다. 접근 불가면 404. */
+    suspend fun defaultModel(appUserId: Long, runId: Long): RunChatDefaultModel {
+        accessible(runId, appUserId) ?: throw NotFoundException()
+        return RunChatDefaultModel(featureModels.resolveAuthoringModel())
     }
 
     /** 이 대화의 draft(ARTEL-1074). 새로고침한 화면이 되찾는 길이다. 접근 불가면 404. */

@@ -4468,11 +4468,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -10630,6 +10630,46 @@
                   "items": {
                     "$ref": "#/components/schemas/DraftScenario"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/default-model": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "chatDefaultModel",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunChatDefaultModel"
                 }
               }
             }
@@ -19666,11 +19706,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -23408,6 +23448,14 @@
             "additionalProperties": {
               "type": "object"
             }
+          }
+        }
+      },
+      "RunChatDefaultModel": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
           }
         }
       },
