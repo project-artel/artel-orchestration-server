@@ -29,3 +29,14 @@ data class CaseReviewItem(
     val updatedAt: Instant,
     val rejectable: Boolean,
 )
+
+/** 상단바 알림함의 승인 대기 한 줄. 승인하거나 거절할 때까지 남는다. */
+data class ReviewNotice(
+    val projectId: String,
+    val projectName: String,
+    val testCaseCount: Long,
+    val scenarioCount: Long,
+)
+
+/** `GET /api/review-notices`. */
+data class ReviewNoticeListResponse(val items: List<ReviewNotice>)

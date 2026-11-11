@@ -22,12 +22,73 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.web.reactive.function.client.WebClient
+import reactor.core.publisher.Mono
+import reactor.netty.http.server.HttpServer
 
 /** V109 와 V110 이 넣은 카탈로그와 그것을 읽는 세 경로(내부, 선택 목록, 관리). */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class LlmModelCatalogIntegrationTest {
+
+    companion object {
+        private const val IMPORTED_ID = "gpt/gpt-6-sol"
+        private const val DISCOVERY_KEY = "openai-catalog-test-key"
+
+        private val providers by lazy {
+            HttpServer.create().port(0).route { routes ->
+                routes.get("/v1/models") { request, response ->
+                    if (request.requestHeaders()["Authorization"] != "Bearer $DISCOVERY_KEY") {
+                        response.status(401).send()
+                    } else {
+                        response.header("Content-Type", "application/json").sendString(Mono.just(
+                            """{"data":[{"id":"gpt-6-sol"},{"id":"gpt-6-luna"},{"id":"gpt-image-1"}]}"""
+                        ))
+                    }
+                }
+                routes.get("/api/v1/models/user") { request, response ->
+                    if (request.requestHeaders()["Authorization"] != "Bearer router-catalog-test-key") {
+                        response.status(401).send()
+                    } else {
+                        response.header("Content-Type", "application/json").sendString(Mono.just("""
+                            {"data":[
+                              {"id":"google/vision","name":"Vision","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"supported_parameters":["tools"]},
+                              {"id":"google/text","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text"],"output_modalities":["text"]},"supported_parameters":["tools"]},
+                              {"id":"test/vision","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"supported_parameters":["tools"]}
+                            ]}
+                        """.trimIndent()))
+                    }
+                }
+                routes.get("/claude/v1/models") { request, response ->
+                    if (request.requestHeaders()["Authorization"] != "Bearer claude-catalog-test-key" ||
+                        request.requestHeaders()["anthropic-version"] != "2026-10-21"
+                    ) {
+                        response.status(401).send()
+                    } else {
+                        val body = if ("after_id=claude-old" in request.uri()) {
+                            """{"has_more":false,"data":[{"id":"claude-test","lifecycle":"active","max_input_tokens":900000,"max_tokens":128000,"capabilities":{"image_input":{"supported":true},"structured_outputs":{"supported":true}}}]}"""
+                        } else {
+                            """{"has_more":true,"last_id":"claude-old","data":[{"id":"claude-old","lifecycle":"retired"}]}"""
+                        }
+                        response.header("Content-Type", "application/json").sendString(Mono.just(body))
+                    }
+                }
+            }.bindNow()
+        }
+
+        @JvmStatic
+        @DynamicPropertySource
+        fun discoverySettings(registry: DynamicPropertyRegistry) {
+            registry.add("artel.openai.base-url") { "http://localhost:${providers.port()}" }
+            registry.add("artel.model-discovery.openai-api-key") { DISCOVERY_KEY }
+            registry.add("artel.llm.openrouter-base-url") { "http://localhost:${providers.port()}/api/v1" }
+            registry.add("artel.model-discovery.openrouter-api-key") { "router-catalog-test-key" }
+            registry.add("artel.anthropic.base-url") { "http://localhost:${providers.port()}/claude" }
+            registry.add("artel.model-discovery.claude-api-key") { "claude-catalog-test-key" }
+        }
+    }
 
     @LocalServerPort
     private val port: Int = 0
@@ -56,10 +117,49 @@ class LlmModelCatalogIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
+        databaseClient.sql("DELETE FROM llm_model WHERE id = :id")
+            .bind("id", IMPORTED_ID).fetch().rowsUpdated().awaitSingle()
         databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
+    }
+
+    @Test
+    fun `platform admin discovers compatible OpenRouter and Claude models from their metadata`() {
+        val path = "/api/admin/llm-models/discovery"
+        val router = call(adminSession, HttpMethod.GET, "$path?provider=openrouter")
+        val claude = call(adminSession, HttpMethod.GET, "$path?provider=claude")
+        assertThat(router.map { it["id"].asText() }).containsExactly("google/vision")
+        assertThat(claude.map { it["id"].asText() }).containsExactly("claude/claude-test")
+    }
+
+    @Test
+    fun `platform admin imports a live compatible model without changing an existing catalog entry`() {
+        val path = "/api/admin/llm-models"
+        val request = """{"provider":"openai","id":"$IMPORTED_ID"}"""
+        assertThat(statusOf(memberSession, HttpMethod.GET, "$path/discovery?provider=openai")).isEqualTo(403)
+        assertThat(statusOf(memberSession, HttpMethod.POST, "$path/import", request)).isEqualTo(403)
+        assertThat(statusOf(adminSession, HttpMethod.POST, "$path/import", """{"provider":"openai","id":"gpt/gpt-image-1"}"""))
+            .isEqualTo(400)
+
+        val candidates = call(adminSession, HttpMethod.GET, "$path/discovery?provider=openai")
+        assertThat(candidates.map { it["id"].asText() }).containsExactly(IMPORTED_ID)
+        val created = call(adminSession, HttpMethod.POST, "$path/import", request)
+        assertThat(created["id"].asText()).isEqualTo(IMPORTED_ID)
+        assertThat(created["enabled"].asBoolean()).isTrue()
+        assertThat(created["route"].asText()).isEqualTo("gpt")
+        assertThat(call(adminSession, HttpMethod.GET, "$path/discovery?provider=openai").size()).isZero()
+
+        call(adminSession, HttpMethod.PATCH, path, """{"id":"$IMPORTED_ID","enabled":false}""")
+        val duplicate = call(adminSession, HttpMethod.POST, "$path/import", request)
+        assertThat(duplicate["enabled"].asBoolean()).isFalse()
+        val importedRows = internal().filter { it["id"].asText() == IMPORTED_ID }
+        assertThat(importedRows).hasSize(1)
+        val imported = importedRows.single()
+        assertThat(imported["reasoning"]["efforts"].map { it.asText() })
+            .containsExactly("max", "xhigh", "high", "medium", "low")
+        assertThat(imported["pricing"].isNull).isTrue()
     }
 
     @Test
@@ -122,14 +222,14 @@ class LlmModelCatalogIntegrationTest {
     }
 
     @Test
-    fun `the four gpt rows copy the openrouter openai rows and are enabled`() {
+    fun `the four gpt rows preserve runtime capabilities and are enabled`() {
         val byId = internal().associateBy { it["id"].asText() }
 
         for (name in listOf("gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-terra")) {
             val gpt = byId.getValue("gpt/$name")
             val openRouter = byId.getValue("openai/$name")
             assertThat(gpt["label"].asText()).describedAs(name).isEqualTo(openRouter["label"].asText() + " (OpenAI API)")
-            for (field in listOf("provider", "supportsStrictJson", "maxInputTokens", "inputModalities", "reasoning", "pricing")) {
+            for (field in listOf("provider", "supportsStrictJson", "maxInputTokens", "inputModalities", "reasoning")) {
                 assertThat(gpt[field]).describedAs("$name $field").isEqualTo(openRouter[field])
             }
             assertThat(gpt["enabled"].asBoolean()).describedAs(name).isTrue()

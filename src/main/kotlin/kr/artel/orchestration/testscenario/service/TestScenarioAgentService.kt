@@ -749,6 +749,22 @@ class TestScenarioAgentService(
      * [gameContext]와 같은 자리·같은 성격이다: 툴 호출이 아니라 첫 턴부터 쥐고 있는 배경 지식.
      * 비참여자면 빈 목록이라 기존과 동일하게 동작한다.
      */
+    /**
+     * 저작 Agent 가 세션을 열 때 받는 게임 정보를 **같은 코드로** 만든다 — MCP 를 쓰는 에이전트가 시나리오를 직접 짤 때
+     * 콘솔의 저작과 같은 재료를 보게 한다. TR 이 고른 버전의 TC 다.
+     */
+    suspend fun authoringContext(runId: Long, projectId: Long, appUserId: Long): kr.artel.orchestration.testrun.dto.AuthoringContextResponse {
+        val version = authoringVersions.of(runId)
+        return withContext(version) {
+            kr.artel.orchestration.testrun.dto.AuthoringContextResponse(
+                entryScene = runCatching { authoringCases.entrySceneName(projectId) }.getOrNull(),
+                startingValues = testCaseService.startingValues(projectId),
+                sceneEdges = testCaseService.sceneEdges(projectId),
+                cases = testCaseList(projectId, appUserId, version.gameBuildId),
+            )
+        }
+    }
+
     private suspend fun testCaseList(projectId: Long, appUserId: Long, gameBuildId: Long?): List<AuthoringTestCase> =
         testCaseService.getAuthoringCases(projectId, appUserId, gameBuildId?.let { authoringVersions.caseIds(it) })
 

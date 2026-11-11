@@ -3,7 +3,16 @@ package kr.artel.orchestration.project.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.project.entity.ProjectEntity
 import org.springframework.data.r2dbc.repository.Query
+import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+
+/** 승인 대기가 있는 프로젝트 한 줄. [ProjectRepository.findReviewNotices] 의 결과다. */
+data class ReviewNoticeRow(
+    @Column("project_id") val projectId: Long,
+    @Column("project_name") val projectName: String,
+    @Column("test_case_count") val testCaseCount: Long,
+    @Column("scenario_count") val scenarioCount: Long,
+)
 
 /**
  * 모든 조회는 project_member 조인과 `deleted_at IS NULL`로 함께 좁힌다. 조건을 서비스에서
@@ -39,6 +48,30 @@ interface ProjectRepository : CoroutineCrudRepository<ProjectEntity, Long> {
         """
     )
     suspend fun findAccessibleById(id: Long, userId: Long): ProjectEntity?
+
+    /**
+     * [userId] 가 승인을 요청한 대기 건을 프로젝트별로 센다. 대기 건이 없는 프로젝트는 빠진다.
+     *
+     * 프로젝트의 `review-queue` 와 같은 기준이다. 나간 프로젝트의 대기 건은 그 경로가 404 라 열 수 없으므로 세지 않는다.
+     */
+    @Query(
+        """
+        SELECT counted.project_id, counted.project_name, counted.test_case_count, counted.scenario_count
+        FROM (
+            SELECT p.id AS project_id, p.name AS project_name, p.updated_at,
+                   (SELECT COUNT(*) FROM test_case c
+                     WHERE c.project_id = p.id AND c.review_status = 'DRAFT' AND c.review_requested_by = :userId) AS test_case_count,
+                   (SELECT COUNT(*) FROM test_scenario s
+                     WHERE s.project_id = p.id AND s.review_status = 'DRAFT' AND s.review_requested_by = :userId) AS scenario_count
+            FROM project p
+            JOIN project_member m ON m.project_id = p.id
+            WHERE m.app_user_id = :userId AND p.deleted_at IS NULL
+        ) counted
+        WHERE counted.test_case_count > 0 OR counted.scenario_count > 0
+        ORDER BY counted.updated_at DESC, counted.project_id DESC
+        """
+    )
+    fun findReviewNotices(userId: Long): Flow<ReviewNoticeRow>
 
     /**
      * 멤버십을 따지지 않는 목록. `DEVELOPER` 등급의 `scope=all` 조회만 부른다.

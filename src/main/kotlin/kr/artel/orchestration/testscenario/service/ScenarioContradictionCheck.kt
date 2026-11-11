@@ -55,6 +55,17 @@ object ScenarioContradictionCheck {
          * 끼어 있었다. 순서를 만드는 유일한 값에서 눈을 감은 셈이다.
          */
         val climbs: Set<String> = emptySet(),
+        /**
+         * 이 걸음이 **더하거나 빼는** 값(`스테이지_진행 +1`, `동전 -20`).
+         *
+         * [sets] 다음에 적용한다 — 케이스는 `== 0` 을 요구하고 `+1` 을 남긴다. 둘을 같은 걸음에서 읽어야 "지나면 1" 이
+         * 된다. 이 칸이 없던 동안 부호 붙은 남김은 걷기에서 빠져, 클리어 케이스를 지나도 진행이 0 으로 남았다 — 다음
+         * 지역(`>= 1`)으로 가는 멀쩡한 흐름이 어긋났다고 짚혔다. 지도가 그 값을 올리는 화면을 알려 주는 프로젝트에서만
+         * 바닥으로 메워졌다.
+         *
+         * 값을 알면 더하고, 바닥만 알면 바닥을 옮기며(빼면 바닥을 잃는다), 모르면 놓아 준다 — 모르는 값을 짚지 않는다.
+         */
+        val adds: Map<String, Double> = emptyMap(),
     )
 
     /**
@@ -148,6 +159,21 @@ object ScenarioContradictionCheck {
                 known[key(variable)] = value
                 atLeast.remove(key(variable))
                 madeAt[key(variable)] = step.at
+            }
+            step.adds.forEach { (variable, delta) ->
+                val name = key(variable)
+                val now = known[name]?.toDoubleOrNull()
+                val floor = atLeast[name]
+                when {
+                    now != null -> {
+                        known[name] = plain(now + delta)
+                        madeAt[name] = step.at
+                    }
+                    floor != null && delta >= 0 -> atLeast[name] = floor + delta
+                    else -> {
+                        known.remove(name); atLeast.remove(name); forgotten += name
+                    }
+                }
             }
             // 오르기만 하는 자리를 지난다 — 얼마인지는 놓고 **바닥은 들고 간다**.
             step.climbs.forEach {
