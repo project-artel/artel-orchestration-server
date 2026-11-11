@@ -283,6 +283,18 @@ class TestRunController(
     }
 
     /**
+     * 이 런의 버전으로 **시나리오를 짤 때 쓰는 게임 정보**: 시작 화면 · 시작 값 · 화면 이동 지도 · 전후 상태가 붙은 TC.
+     * 콘솔의 저작 Agent 가 세션을 열 때 받는 것과 같은 코드로 만든다. MCP 를 쓰는 에이전트가 직접 짤 때 같은 재료를 본다.
+     */
+    @GetMapping("/{runId}/authoring-context")
+    suspend fun authoringContext(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long
+    ): kr.artel.orchestration.testrun.dto.AuthoringContextResponse =
+        chatService.authoringContext(appUserId, runId)
+
+    /**
      * 이 런이 Artel Bot 에게 잠겨 있나(ARTEL-1264). 맵 · TS 편집 화면이 잠금 화면을 띄울지 읽는다.
      * 잠금 · 풀림 · 진행 단계가 바뀌면 프로젝트 변경 stream 이 `RUN_LOCKS` 로 알린다.
      */

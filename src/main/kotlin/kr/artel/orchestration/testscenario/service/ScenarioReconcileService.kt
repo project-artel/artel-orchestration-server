@@ -1118,6 +1118,10 @@ class ScenarioReconcileService(
                 // 케이스가 남기는 값이 마지막이다 — 등불을 끄는 케이스는 "켜짐"을 요구하고 "꺼짐"을 남긴다.
                 // 부호가 붙은 것(`동전 +20`)은 정하는 것이 아니라 더하는 것이라 여기 안 든다. 아래 개수 검사가 센다.
                 fact?.leaves.orEmpty().filterValues { !it.isSigned() },
+            // 부호가 붙은 남김은 더하기다. 정하는 값(sets) 다음에 적용된다 — `== 0` 을 요구하고 `+1` 을 남기면 지나서 1 이다.
+            adds = fact?.leaves.orEmpty()
+                .filterValues { it.isSigned() }
+                .mapValues { (_, value) -> value.trim().toDouble() },
             clears = buildSet {
                 gap?.takeIf { !it.contains("→") }?.let(::add)
                 raisedIn.forEach { (value, scenes) ->

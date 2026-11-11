@@ -231,6 +231,10 @@ class TestRunChatService(
         return outcome.applied
     }
 
+    /** 이 런의 버전으로 시나리오를 짤 때 쓰는 게임 정보. 콘솔의 저작 Agent 가 받는 것과 같다. 접근 불가면 404. */
+    suspend fun authoringContext(appUserId: Long, runId: Long) =
+        accessible(runId, appUserId)?.let { agentService.authoringContext(runId, it.projectId, appUserId) } ?: throw NotFoundException()
+
     /**
      * 도는 저작 요청 **하나만** 끊는다(ARTEL-955). 세션·대화·이미 저장한 시나리오는 그대로 남는다.
      *
