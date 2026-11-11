@@ -26,7 +26,7 @@ class SdkActionReconnectTest {
     private val mapper = jacksonObjectMapper()
     private val sessions = SessionManager(mapper)
     private val failures = mock(QaExecutionFailureService::class.java)
-    private val delivery = SdkActionDelivery(sessions, mock(QaTryRepository::class.java), mapper)
+    private val delivery = SdkActionDelivery(sessions, mock(QaTryRepository::class.java), mapper, failures)
     private val processId = "11111111-1111-1111-1111-111111111111"
     private val handler = SdkWebSocketHandler(
         mapper, mock(GameInstanceRepository::class.java), sessions, failures,

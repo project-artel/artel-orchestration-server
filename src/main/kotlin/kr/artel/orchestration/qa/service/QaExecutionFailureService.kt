@@ -172,6 +172,9 @@ class QaExecutionFailureService(
     suspend fun sdkReconnectExpired(qaTryId: Long) =
         fail(qaTryId, "SDK connection did not recover within 5 seconds.", closeAgent = true)
 
+    suspend fun sdkInputSessionChanged(qaTryId: Long) =
+        fail(qaTryId, "SDK session changed before an OS input action completed.", closeAgent = true)
+
     /**
      * Ends a run because the operator asked. `false` when it had already ended.
      *

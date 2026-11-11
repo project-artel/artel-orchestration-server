@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.sdk.dto.ActionAcceptedDto
 import kr.artel.orchestration.sdk.dto.ActionDeliveryDto
 import kr.artel.orchestration.sdk.dto.ActionDeliveryResultDto
@@ -22,6 +23,7 @@ class SdkActionDelivery(
     private val sessions: SessionManager,
     private val tries: QaTryRepository,
     private val mapper: ObjectMapper,
+    private val failures: QaExecutionFailureService,
 ) {
     internal var clock: Clock = Clock.systemUTC()
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -35,7 +37,8 @@ class SdkActionDelivery(
         val processId: String,
         val json: String,
         val expiresAt: Long,
-        var session: Any?,
+        var session: WebSocketSession,
+        val pinnedSession: WebSocketSession?,
         var attempts: Int = 1,
         var lastSentAt: Long,
         var accepted: Boolean = false,
@@ -45,29 +48,38 @@ class SdkActionDelivery(
         instanceId: String,
         qaTryId: Long,
         action: ActionResponseDto,
-        expiresAt: Long = clock.millis() + LIFETIME_MILLIS
+        expiresAt: Long = clock.millis() + LIFETIME_MILLIS,
+        expectedSession: WebSocketSession? = null,
     ): Boolean = mutex.withLock {
         val now = clock.millis()
         if (now >= expiresAt) return@withLock false
-        val processId = sessions.deliveryProcessId(instanceId)
-            ?: return@withLock sessions.sendAction(instanceId, action)
+        if (action.inputMode == "os" && expectedSession == null) return@withLock false
+        val target = sessions.deliveryTarget(instanceId)
+        if (expectedSession != null && target?.session !== expectedSession) return@withLock false
+        val processId = target?.processId
+            ?: return@withLock sessions.sendAction(instanceId, action, expectedSession = target?.session)
         val key = instanceId to action.id
         check(key !in pending) { "QA ACTION requestId is already pending" }
         // 상한에 닿으면 새 효과를 보내지 않는다. 진행 중 요청을 지우면 중복 실행 방지가 깨진다.
         if (pending.size >= MAX_PENDING) return@withLock false
         val json = mapper.writeValueAsString(action.copy(delivery = ActionDeliveryDto(processId, expiresAt)))
         val delivery = Pending(instanceId, qaTryId, action.id, processId, json, expiresAt,
-            sessions.sessionIdentity(instanceId), lastSentAt = now)
+            target.session, expectedSession, lastSentAt = now)
         pending[key] = delivery
         val queued = sessions.sendRawToSession(instanceId, delivery.session, processId, json)
         logger.info("SDK ACTION 복구 등록 [instanceId={}, requestId={}, queued={}]", instanceId, action.id, queued)
-        // 세션 교체나 닫힌 큐와 경합해도 pending은 유지한다. 같은 프로세스가 돌아온 뒤 복구할 수 있다.
+        if (!queued && expectedSession != null) {
+            pending.remove(key)
+            return@withLock false
+        }
+        // virtual 요청은 같은 프로세스가 돌아온 뒤 복구할 수 있다.
         true
     }
 
     suspend fun accepted(instanceId: String, frame: ActionAcceptedDto, session: WebSocketSession) = mutex.withLock {
         if (sessions.getSession(instanceId) !== session) return@withLock
         val delivery = pending[instanceId to frame.requestId] ?: return@withLock
+        if (delivery.pinnedSession != null && delivery.pinnedSession !== session) return@withLock
         if (frame.processId != delivery.processId) return@withLock
         delivery.accepted = true
         logger.info("SDK ACTION 수신 확인 [instanceId={}, requestId={}, attempts={}]",
@@ -78,7 +90,8 @@ class SdkActionDelivery(
         mutex.withLock {
             if (sessions.getSession(instanceId) !== session) return@withLock false
             val delivery = frame.requestId?.let { pending[instanceId to it] }
-            if (delivery != null) return@withLock delivery.processId == frame.processId
+            if (delivery != null) return@withLock delivery.processId == frame.processId &&
+                (delivery.pinnedSession == null || delivery.pinnedSession === session)
             frame.processId == null || frame.processId == sessions.deliveryProcessId(instanceId)
         }
 
@@ -109,7 +122,13 @@ class SdkActionDelivery(
         }
     }
 
-    internal suspend fun retryDue(onlyInstance: String? = null) = mutex.withLock {
+    internal suspend fun retryDue(onlyInstance: String? = null) {
+        val interrupted = mutex.withLock { retryLocked(onlyInstance) }
+        for (qaTryId in interrupted) failures.sdkInputSessionChanged(qaTryId)
+    }
+
+    private suspend fun retryLocked(onlyInstance: String?): Set<Long> {
+        val interrupted = mutableSetOf<Long>()
         val now = clock.millis()
         val iterator = pending.iterator()
         while (iterator.hasNext()) {
@@ -122,8 +141,16 @@ class SdkActionDelivery(
                     delivery.instanceId, delivery.requestId, delivery.accepted)
                 continue
             }
-            val current = sessions.sessionIdentity(delivery.instanceId) ?: continue
-            if (sessions.deliveryProcessId(delivery.instanceId) != delivery.processId) {
+            val target = sessions.deliveryTarget(delivery.instanceId) ?: continue
+            val current = target.session
+            if (delivery.pinnedSession != null && current !== delivery.pinnedSession) {
+                iterator.remove()
+                interrupted += delivery.qaTryId
+                logger.warn("OS 입력 session 변경으로 ACTION 재전송 중단 [instanceId={}, requestId={}]",
+                    delivery.instanceId, delivery.requestId)
+                continue
+            }
+            if (target.processId != delivery.processId) {
                 iterator.remove()
                 logger.warn("SDK 프로세스 변경으로 ACTION 자동 재실행 중단 [instanceId={}, requestId={}]",
                     delivery.instanceId, delivery.requestId)
@@ -140,6 +167,7 @@ class SdkActionDelivery(
             logger.info("SDK ACTION 재전송 [instanceId={}, requestId={}, attempt={}, accepted={}, queued={}]",
                 delivery.instanceId, delivery.requestId, delivery.attempts, delivery.accepted, queued)
         }
+        return interrupted
     }
 
     internal suspend fun pendingCount(): Int = mutex.withLock { pending.size }

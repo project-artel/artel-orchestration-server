@@ -48,6 +48,12 @@ class SessionManager(private val objectMapper: ObjectMapper) {
 
     fun deliveryProcessId(instanceId: String): String? = sessions[instanceId]?.processId
 
+    internal data class DeliveryTarget(val session: WebSocketSession, val processId: String?)
+
+    /** session과 processId는 같은 registry 항목에서 읽어야 한다. */
+    internal fun deliveryTarget(instanceId: String): DeliveryTarget? =
+        sessions[instanceId]?.let { DeliveryTarget(it.session, it.processId) }
+
     /** 확인한 세션 객체에만 넣는다. 교체 뒤의 구버전 SDK에 재전송이 넘어가면 안 된다. */
     fun sendRawToSession(instanceId: String, identity: Any?, processId: String, json: String): Boolean {
         val registered = sessions[instanceId] ?: return false
@@ -138,7 +144,12 @@ class SessionManager(private val objectMapper: ObjectMapper) {
 
     fun hasSession(instanceId: String): Boolean = sessions.containsKey(instanceId)
 
-    suspend fun sendAction(instanceId: String, action: ActionResponseDto): Boolean {
+    suspend fun sendAction(instanceId: String, action: ActionResponseDto, expectedSession: WebSocketSession? = null): Boolean {
+        if (expectedSession != null) {
+            val registered = sessions[instanceId] ?: return false
+            if (registered.session !== expectedSession) return false
+            return registered.emit(objectMapper.writeValueAsString(action)) == Sinks.EmitResult.OK
+        }
         return send(instanceId, action)
     }
 

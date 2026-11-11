@@ -63,7 +63,9 @@ data class CreateQaTryRequest(
      * `keySource` 를 그대로 보낸다. `user` 인데 그 model 의 서비스 key 가 없으면 400 `llm_key_missing`, `platform`
      * 인데 `gpt/` model 이면 400 `llm_key_missing` 이다.
      */
-    val keySource: String? = null
+    val keySource: String? = null,
+    /** 이 실행의 입력 경로. 생략하면 virtual이며 os는 SDK 확인 뒤 시작한다. */
+    val inputMode: String? = null
 )
 
 /** 런(TR) 단위 QA 시작 요청(ARTEL-259). [testRunId]의 시나리오들을 순차 실행한다. 설정은 QaTry와 동일. */
@@ -129,7 +131,9 @@ data class CreateQaRunRequest(
      * `keySource` 를 그대로 보낸다. `user` 인데 그 model 의 서비스 key 가 없으면 400 `llm_key_missing`, `platform`
      * 인데 `gpt/` model 이면 400 `llm_key_missing` 이다.
      */
-    val keySource: String? = null
+    val keySource: String? = null,
+    /** run의 모든 시나리오에서 고정하는 입력 경로: virtual(기본) / os. */
+    val inputMode: String? = null
 )
 
 data class QaReasoningRequest(
@@ -219,7 +223,8 @@ data class QaTryResponse(
      * agent 의 코드(`llm_credit_exhausted` · `llm_auth_failed` · `llm_model_unavailable`), 그 때문에 시작하지
      * 못한 시도는 `not_started` 다.
      */
-    val stop: QaStopResponse? = null
+    val stop: QaStopResponse? = null,
+    val inputMode: String = "virtual"
 )
 
 /** 미판정으로 끝난 까닭(ARTEL-1371). [provider] 는 `anthropic` · `openai` · `openrouter` · `bedrock` 이다. */
@@ -254,7 +259,8 @@ data class QaRunResponse(
     /** 런을 멈춘 모델 API 오류(ARTEL-1371). 멈추지 않은 런은 null 이다. */
     val stop: QaStopResponse? = null,
     /** 판정 없이 오류로 끝나 버린 런이다. 히스토리 · 알림함에는 나오지 않고, 런 화면만 이 값을 본다. */
-    val discarded: Boolean = false
+    val discarded: Boolean = false,
+    val inputMode: String = "virtual"
 )
 
 data class QaLogResponse(

@@ -7,6 +7,7 @@ import kr.artel.orchestration.sdk.service.SdkActionDelivery
 import kr.artel.orchestration.contentmap.capture.ScreenCaptureResultRouter
 import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
+import kr.artel.orchestration.qa.service.QaInputPreflight
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
@@ -36,6 +37,7 @@ class ActionResultMessageHandler(
     private val qaBridge: QaSdkBridgeService,
     private val mapper: ObjectMapper,
     private val delivery: SdkActionDelivery,
+    private val inputPreflight: QaInputPreflight,
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(ActionResultMessageHandler::class.java)
@@ -45,6 +47,8 @@ class ActionResultMessageHandler(
     override suspend fun handle(instanceId: String, payloadText: String, session: WebSocketSession) {
         if (!delivery.isCurrentSession(instanceId, session)) return
         logger.info("액션 결과 수신 [instanceId: $instanceId]: $payloadText")
+
+        if (inputPreflight.handle(instanceId, payloadText, session)) return
 
         val gameInstanceId = instanceId.toLong()
         if (scanResults.handle(gameInstanceId, payloadText)) {

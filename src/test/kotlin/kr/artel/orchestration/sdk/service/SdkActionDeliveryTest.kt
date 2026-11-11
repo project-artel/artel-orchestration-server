@@ -4,6 +4,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.sdk.dto.ActionAcceptedDto
 import kr.artel.orchestration.sdk.dto.ActionDeliveryResultDto
 import kr.artel.orchestration.sdk.dto.ActionItemDto
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
@@ -25,7 +27,8 @@ class SdkActionDeliveryTest {
     private val mapper = jacksonObjectMapper()
     private val sessions = SessionManager(mapper)
     private val tries = mock(QaTryRepository::class.java)
-    private val delivery = SdkActionDelivery(sessions, tries, mapper)
+    private val failures = mock(QaExecutionFailureService::class.java)
+    private val delivery = SdkActionDelivery(sessions, tries, mapper, failures)
     private val processId = "11111111-1111-1111-1111-111111111111"
     private val messages = mutableListOf<String>()
     private var now = 1_800_000_000_000L
@@ -101,6 +104,21 @@ class SdkActionDeliveryTest {
         assertThat(messages).hasSize(2)
         assertThat(messages[1]).isEqualTo(messages[0])
         assertThat(delivery.acceptsResult("4", ActionDeliveryResultDto(action.id, processId), previous)).isFalse()
+    }
+
+    @Test
+    fun `OS 요청은 같은 프로세스가 새 session으로 연결해도 재전송하지 않는다`(): Unit = runBlocking {
+        val osAction = action.copy(inputMode = "os")
+        val previous = socket
+        assertThat(delivery.send("4", 11, osAction, expectedSession = previous)).isTrue()
+        socket = connect(processId)
+
+        assertThat(delivery.acceptsResult("4", ActionDeliveryResultDto(action.id, processId), socket)).isFalse()
+        delivery.onReconnect("4")
+
+        assertThat(messages).hasSize(1)
+        assertThat(delivery.pendingCount()).isZero()
+        verify(failures).sdkInputSessionChanged(11)
     }
 
     @Test

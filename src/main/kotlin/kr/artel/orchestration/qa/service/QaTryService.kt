@@ -8,11 +8,14 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.error.UpstreamUnavailableException
+import kr.artel.orchestration.common.error.ApiException
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -83,7 +86,7 @@ internal const val CONTENT_MAP_MODE_FIELD = "content_map_mode"
  * 쉽기 때문이다. 빠뜨리면 그 게이트는 STARTING 창에서만 살아 있다가 런이 RUNNING 이 되는 순간
  * 조용히 기본값으로 돌아간다.
  */
-private val CARRIED_GATE_FIELDS = listOf(KNOWLEDGE_MODE_FIELD, CONTENT_MAP_MODE_FIELD)
+private val CARRIED_GATE_FIELDS = listOf(KNOWLEDGE_MODE_FIELD, CONTENT_MAP_MODE_FIELD, INPUT_MODE_FIELD)
 
 /**
  * Agent 스냅샷 위에 그 행이 이미 들고 있던 gate 를 다시 얹는다.
@@ -106,6 +109,10 @@ internal fun mergeCarriedGates(carrier: String, agentConfig: JsonNode?, objectMa
     }
     return ((agentConfig as? ObjectNode)?.deepCopy() ?: objectMapper.createObjectNode()).apply {
         for (field in CARRIED_GATE_FIELDS) {
+            if (field == INPUT_MODE_FIELD) {
+                put(field, inputModeOf(carried).wire)
+                continue
+            }
             val value = carried.path(field)
             if (value.isTextual) put(field, value.asText())
         }
@@ -361,7 +368,8 @@ class QaTryPersistenceService(
         contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
         keySource: KeySource = KeySource.PLATFORM,
         functions: QaResolvedFunctions? = null,
-        gameIdentities: List<InternalGameIdentityResponse>? = null
+        gameIdentities: List<InternalGameIdentityResponse>? = null,
+        inputMode: QaInputMode = QaInputMode.VIRTUAL
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -378,6 +386,7 @@ class QaTryPersistenceService(
                             objectMapper.createObjectNode()
                                 .put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
                                 .put(CONTENT_MAP_MODE_FIELD, contentMapMode.wire)
+                                .put(INPUT_MODE_FIELD, inputMode.wire)
                                 .also { config ->
                                     functions?.writeTo(config)
                                     gameIdentities?.let { config.set<JsonNode>("game_identities", objectMapper.valueToTree(it)) }
@@ -406,8 +415,8 @@ class QaTryPersistenceService(
      * @param gates 이 run 의 두 gate. **run 하나가 한 arm 이므로 값은 여기서 한 번 만들어 모든 try 에
      *   같은 것이 실린다** — 루프 안에서 만들면 try 마다 다른 값이 들어갈 문이 열린다.
      *
-     *   단일 시나리오 경로와 달리 기본값을 써 넣지 않는다. 아무것도 안 주면 `run_config` 가 `{}` 로
-     *   남아 이 경로로 시작하던 기존 호출자의 행이 글자까지 그대로다.
+     *   단일 시나리오 경로와 달리 생략한 지식과 content map gate의 키는 쓰지 않는다.
+     * @param inputMode 시작 요청에서 정한 입력 경로. run과 모든 try에 기본값을 포함해 기록한다.
      * @param label 이 run 이 속한 실험 묶음의 이름. [gates] 와 같은 자리에서 받되 `run_config` 가
      *   아니라 `qa_run` 컬럼에 남는다 — 묶음은 run 단위이고 arm 은 try 단위라, 둘을 한 곳에 두면
      *   `qa_try` 를 세는 집계가 묶음까지 세게 된다. null 이면 어느 실험에도 안 묶인 run 이다.
@@ -424,7 +433,8 @@ class QaTryPersistenceService(
         gameBuildId: Long? = null,
         keySource: KeySource = KeySource.PLATFORM,
         functions: QaResolvedFunctions? = null,
-        gameIdentities: List<InternalGameIdentityResponse>? = null
+        gameIdentities: List<InternalGameIdentityResponse>? = null,
+        inputMode: QaInputMode = QaInputMode.VIRTUAL
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -434,6 +444,7 @@ class QaTryPersistenceService(
                     objectMapper.createObjectNode().apply {
                         gates.knowledgeMode?.let { put(KNOWLEDGE_MODE_FIELD, it.wire) }
                         gates.contentMapMode?.let { put(CONTENT_MAP_MODE_FIELD, it.wire) }
+                        put(INPUT_MODE_FIELD, inputMode.wire)
                         functions?.writeTo(this)
                         gameIdentities?.let { set<JsonNode>("game_identities", objectMapper.valueToTree(it)) }
                     }
@@ -448,6 +459,7 @@ class QaTryPersistenceService(
                     status = "STARTING",
                     label = label,
                     runConfig = Json.of(objectMapper.writeValueAsString(objectMapper.createObjectNode().apply {
+                        put(INPUT_MODE_FIELD, inputMode.wire)
                         gameIdentities?.let { set<JsonNode>("game_identities", objectMapper.valueToTree(it)) }
                     })),
                     keySource = keySource.wire,
@@ -497,8 +509,8 @@ class QaTryPersistenceService(
             val configJson = objectMapper.writeValueAsString(
                 mergeCarriedGates(qaRun.runConfig.asString(), runConfig, objectMapper)
             )
-            // qa_run 의 스냅샷에는 gate 를 얹지 않는다. gate 는 try 마다 집행되고 읽는 쪽도 전부
-            // qa_try.run_config 를 본다 — 두 곳에 두면 어느 쪽이 진실인지가 질문이 된다.
+            // 지식과 content map gate는 try가 집행한다. 입력 모드는 run 조회에도 표시하므로
+            // run과 모든 try를 만들 때 같은 값을 저장하고 Agent 스냅샷 뒤에도 보존한다.
             //
             // try 쪽은 다르다. 이 UPDATE 가 run_config 를 통째로 갈아치우므로, 그 행이 PENDING 때
             // 받아 둔 gate 를 다시 얹어야 한다(`attachAndMarkRunning` 과 같은 규칙). 빠뜨리면 run
@@ -616,6 +628,7 @@ class QaTryService(
     private val logService: QaLogService,
     private val runStatusNotifier: QaRunStatusNotifier,
     private val functionCatalogs: GameFunctionCatalogService,
+    private val inputPreflight: QaInputPreflight,
     private val gameNoteService: GameNoteService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -629,7 +642,8 @@ class QaTryService(
         contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
         runKey: QaRunKey = QaRunKey(),
         functionOptions: QaFunctionOptions = QaFunctionOptions(),
-        resolveProjectKey: (suspend (Long) -> QaRunKey)? = null
+        resolveProjectKey: (suspend (Long) -> QaRunKey)? = null,
+        inputMode: QaInputMode = QaInputMode.VIRTUAL
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -656,7 +670,8 @@ class QaTryService(
         val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
         val gameIdentities = gameIdentityService.snapshot(instance.projectId, instance.lastGameBuildId)
         val (starting, startLog) = persistence.createStarting(
-            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, executionKey.keySource, functions, gameIdentities
+            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, executionKey.keySource, functions, gameIdentities,
+            inputMode = inputMode
         )
         logService.publish(startLog)
         mediaRelay.prepare()
@@ -685,6 +700,9 @@ class QaTryService(
         )
 
         return try {
+            inputPreflight.requireAvailable(gameInstanceId, inputMode, force = true)
+            if (tryRepository.findById(qaTryId)?.status != "STARTING")
+                throw ConflictException("QA session start is no longer active.", code = "qa_start_cancelled")
             val agent = agentPort.createSession(
                 context = context,
                 onMessage = { envelope -> inboundRouter.handle(envelope) },
@@ -700,11 +718,14 @@ class QaTryService(
             readings.start(gameInstanceId)
             running.toResponse()
         } catch (error: CancellationException) {
+            withContext(NonCancellable) { failureService.failStarting(qaTryId, "QA session start was cancelled.") }
             throw error
         } catch (error: Exception) {
-            failureService.failStarting(qaTryId, "QA Agent session creation failed.")
+            val reason = if (error is ApiException && error.code.startsWith("sdk_input_"))
+                error.message ?: "SDK input preflight failed." else "QA Agent session creation failed."
+            failureService.failStarting(qaTryId, reason)
             // agent-server 가 4xx 로 거절했으면 그 status 와 이유를 그대로 돌려준다(ARTEL-1236).
-            throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
+            throw error as? ApiException ?: UpstreamUnavailableException(
                 error.message ?: "QA Agent 세션 생성에 실패했습니다.",
                 cause = error
             )
@@ -727,7 +748,8 @@ class QaTryService(
         label: String? = null,
         runKey: QaRunKey = QaRunKey(),
         functionOptions: QaFunctionOptions = QaFunctionOptions(),
-        resolveProjectKey: (suspend (Long) -> QaRunKey)? = null
+        resolveProjectKey: (suspend (Long) -> QaRunKey)? = null,
+        inputMode: QaInputMode = QaInputMode.VIRTUAL
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -778,7 +800,8 @@ class QaTryService(
             gameBuildId = instance.lastGameBuildId,
             keySource = executionKey.keySource,
             functions = functions,
-            gameIdentities = gameIdentities
+            gameIdentities = gameIdentities,
+            inputMode = inputMode
         )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
         mediaRelay.prepare()
@@ -812,6 +835,9 @@ class QaTryService(
         )
 
         return try {
+            inputPreflight.requireAvailable(gameInstanceId, inputMode, force = true)
+            if (runRepository.findById(requireNotNull(started.qaRun.id))?.status != "STARTING")
+                throw ConflictException("QA run start is no longer active.", code = "qa_start_cancelled")
             val agent = agentPort.createSession(
                 context = context,
                 onMessage = { envelope -> inboundRouter.handle(envelope) },
@@ -829,10 +855,11 @@ class QaTryService(
             readings.start(gameInstanceId)
             running.toRunResponse(started.tries)
         } catch (error: CancellationException) {
+            withContext(NonCancellable) { failRun(started, "QA run start was cancelled.") }
             throw error
         } catch (error: Exception) {
             failRun(started, "QA run session could not start: ${error.message ?: error::class.simpleName}")
-            throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
+            throw error as? ApiException ?: UpstreamUnavailableException(
                 error.message ?: "QA Run 세션 생성에 실패했습니다.",
                 cause = error
             )
@@ -915,7 +942,8 @@ class QaTryService(
         tries = tries.map { it.toResponse() },
         testRunGameBuildId = testRuns.findById(testRunId)?.gameBuildId?.toString(),
         stop = stopCode?.let { QaStopResponse(it, stopProvider, stopMessage) },
-        discarded = discardedAt != null
+        discarded = discardedAt != null,
+        inputMode = inputModeOf(runConfig.asString(), objectMapper).wire
     )
 
     /**
@@ -1140,6 +1168,7 @@ class QaTryService(
         effectiveCheats = functions.effectiveCheats,
         effectiveBehaviors = functions.effectiveBehaviors,
         qaRunId = qaRunId?.toString(),
-        stop = stopCode?.let { QaStopResponse(it, stopProvider, stopMessage) }
+        stop = stopCode?.let { QaStopResponse(it, stopProvider, stopMessage) },
+        inputMode = inputModeOf(runConfig.asString(), objectMapper).wire
     )
 }
