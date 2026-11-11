@@ -65,6 +65,9 @@ class InProcessMediaServiceTest {
             assertThat(f.service.latestFrame(stream, next)).isNull()
             f.service.sdkSignal(stream, frame(2))
             assertThat(f.service.latestFrame(stream, next)).isNotNull()
+            now += 1_000_000_001L
+            assertThat(f.service.latestFrame(stream, next, 1_000_000_000L)).isNull()
+            assertThat(f.service.latestFrame(stream, next)).isNotNull()
             now += 5_000_000_000L
             assertThat(f.service.latestFrame(stream, next)).isNull()
         } finally { f.service.shutdown() }
