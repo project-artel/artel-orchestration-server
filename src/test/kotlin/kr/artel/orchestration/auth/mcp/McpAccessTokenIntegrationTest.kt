@@ -254,6 +254,39 @@ class McpAccessTokenIntegrationTest {
     }
 
     @Test
+    fun `TC 번호표와 TC 폴더는 testcase 토큰으로 읽고, 폴더 만들기와 TC 넣기는 testcase write 다`() {
+        val world = newWorld()
+        val writer = mint(world.userId, scope = "testcase:read testcase:write")
+        val reader = mint(world.userId, scope = "testcase:read")
+        val saved = call(
+            writer, HttpMethod.POST, "${world.base}/case-contracts/cases",
+            """{"cases":[{"scene":"숲","step":"늑대를 공격한다.","expectedValue":"늑대가 쓰러진다."}]}""",
+        )
+        val caseId = saved.body["created"].single().asText()
+
+        val numbers = call(reader, HttpMethod.GET, "${world.base}/test-case-identifiers")
+        assertThat(numbers.status).isEqualTo(200)
+        assertThat(numbers.body.single()["testCaseId"].asText()).isEqualTo(caseId)
+
+        val folders = "${world.base}/test-case-folders"
+        assertThat(call(reader, HttpMethod.GET, folders).status).isEqualTo(200)
+        assertThat(call(reader, HttpMethod.POST, folders, """{"name":"핵심 기능"}""").body["code"].asText())
+            .isEqualTo("insufficient_scope")
+        val made = call(writer, HttpMethod.POST, folders, """{"name":"핵심 기능"}""")
+        assertThat(made.status).isEqualTo(201)
+        val items = "$folders/${made.body["id"].asText()}/items"
+        assertThat(call(reader, HttpMethod.POST, items, """{"caseIds":["$caseId"]}""").body["code"].asText())
+            .isEqualTo("insufficient_scope")
+        assertThat(call(writer, HttpMethod.POST, items, """{"caseIds":["$caseId"]}""").status).isEqualTo(200)
+        assertThat(call(reader, HttpMethod.GET, items).body["items"].single()["testCaseId"].asText()).isEqualTo(caseId)
+        // 지우기 · 빼기는 열지 않는다. 화면에서 한다.
+        assertThat(call(writer, HttpMethod.DELETE, "$folders/${made.body["id"].asText()}").body["code"].asText())
+            .isEqualTo("mcp_route_forbidden")
+        assertThat(call(writer, HttpMethod.POST, "$items/removals", """{"caseIds":["$caseId"]}""").body["code"].asText())
+            .isEqualTo("mcp_route_forbidden")
+    }
+
+    @Test
     fun `save_scenarios 는 MCP 토큰으로 시나리오를 승인 대기로 저장한다`() {
         val world = newWorld()
         val author = mint(world.userId, scope = "testcase:read scenario:write")
