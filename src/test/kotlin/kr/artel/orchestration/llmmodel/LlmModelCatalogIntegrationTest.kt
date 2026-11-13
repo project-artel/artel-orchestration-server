@@ -166,7 +166,7 @@ class LlmModelCatalogIntegrationTest {
     fun `the migrations leave twenty rows, all enabled, and no bedrock row`() {
         val rows = internal()
 
-        // V182 가 Bedrock 행 셋(순번 10 · 140 · 150)을 지웠다(ARTEL-1439). 남은 행은 순번을 그대로 갖는다.
+        // V183 가 Bedrock 행 셋(순번 10 · 140 · 150)을 지웠다(ARTEL-1439). 남은 행은 순번을 그대로 갖는다.
         assertThat(rows).hasSize(20)
         assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..23).map { it * 10 } - listOf(10, 140, 150))
         assertThat(rows.map { it["id"].asText() }).noneMatch { it.startsWith("bedrock/") }
