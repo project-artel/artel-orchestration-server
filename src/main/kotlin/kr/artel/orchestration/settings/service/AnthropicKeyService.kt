@@ -56,7 +56,7 @@ data class AnthropicKeyStatus(
 )
 
 /**
- * Claude API key 를 저장하고 확인한다. 모양은 [BedrockKeyService] 와 같다.
+ * Claude API key 를 저장하고 확인한다.
  *
  * key 는 관리 화면에서 넣은 값뿐이다. 저장된 key 가 없으면 agent-server 는 `claude/` model 을 부르지 못한다.
  */

@@ -12,7 +12,6 @@ import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.settings.repository.PlatformSettingRepository
 import kr.artel.orchestration.settings.service.ANTHROPIC_API_KEY_SETTING
-import kr.artel.orchestration.settings.service.BEDROCK_API_KEY_SETTING
 import kr.artel.orchestration.settings.service.FeatureModelService
 import kr.artel.orchestration.settings.service.LlmKeyCheckResult
 import kr.artel.orchestration.settings.service.LlmKeySource
@@ -117,7 +116,7 @@ class FeatureModelSettingsIntegrationTest {
     @AfterEach
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
-        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = TRUE, updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
@@ -344,17 +343,6 @@ class FeatureModelSettingsIntegrationTest {
 
         assertThat(defaults.scenarioAuthoringModel).startsWith("claude/").isNotEqualTo(SONNET)
         setEnabled(SONNET, true)
-    }
-
-    @Test
-    fun `a Bedrock key alone picks an enabled bedrock model`(): Unit = runBlocking {
-        storeKey(BEDROCK_API_KEY_SETTING, "bedrock-api-key-0123456789abcdef")
-
-        val defaults = providerDefaultModels.pick()
-
-        assertThat(defaults.provider).isEqualTo(PlatformProvider.BEDROCK)
-        assertThat(defaults.scenarioAuthoringModel).startsWith("bedrock/")
-        assertThat(defaults.decisionModel).isEqualTo(defaults.scenarioAuthoringModel)
     }
 
     private suspend fun storeKey(settingKey: String, apiKey: String) {

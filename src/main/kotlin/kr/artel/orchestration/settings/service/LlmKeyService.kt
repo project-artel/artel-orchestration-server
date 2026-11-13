@@ -219,7 +219,7 @@ class LlmKeyService(
 
 /**
  * 공백이 없고 길이가 [MIN_API_KEY_LENGTH] 이상 [maxLength] 이하인지 본다. 아니면 400 `invalid_api_key` 다.
- * Bedrock API key 는 OpenRouter key 보다 길어 상한을 부르는 쪽이 정한다.
+ * key 마다 길이가 달라 상한을 부르는 쪽이 정한다.
  */
 fun validateApiKey(apiKey: String, maxLength: Int) {
     if (apiKey.length !in MIN_API_KEY_LENGTH..maxLength || apiKey.any(Char::isWhitespace)) {

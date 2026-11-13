@@ -26,8 +26,8 @@ data class LlmModelReasoning(
     val maxTokens: Int?,
     val step: Int?,
     /**
-     * 요청이 추론을 고르지 않았을 때 agent-server 가 켤 token 예산. provider 기본값이 없는 model(Bedrock 의
-     * Anthropic `budget_tokens` 경로)에만 있고, 나머지는 null 이다. `/api/qa-models` 에는 싣지 않는다.
+     * 요청이 추론을 고르지 않았을 때 agent-server 가 켤 token 예산. provider 기본값이 없는 model 에만 있고, 나머지는
+     * null 이다(예전 Bedrock 의 Anthropic `budget_tokens` 경로가 그랬다). `/api/qa-models` 에는 싣지 않는다.
      */
     val defaultTokens: Int?
 )
@@ -38,8 +38,7 @@ data class AdminLlmModelResponse(
     val label: String,
     val provider: String,
     /**
-     * `bedrock`(`bedrock/` 로 시작하는 id), `claude`(`claude/` 로 시작하는 id), `gpt`(`gpt/` 로 시작하는 id),
-     * 그 밖에는 `openrouter`.
+     * `claude`(`claude/` 로 시작하는 id), `gpt`(`gpt/` 로 시작하는 id), 그 밖에는 `openrouter`.
      */
     val route: String,
     val enabled: Boolean,

@@ -227,7 +227,7 @@ data class QaTryResponse(
     val inputMode: String = "virtual"
 )
 
-/** 미판정으로 끝난 까닭(ARTEL-1371). [provider] 는 `anthropic` · `openai` · `openrouter` · `bedrock` 이다. */
+/** 미판정으로 끝난 까닭(ARTEL-1371). [provider] 는 `anthropic` · `openai` · `openrouter` 다. 카탈로그에 남은 `bedrock/` model 을 고른 런이면 `bedrock` 이다. */
 data class QaStopResponse(
     val code: String,
     val provider: String?,

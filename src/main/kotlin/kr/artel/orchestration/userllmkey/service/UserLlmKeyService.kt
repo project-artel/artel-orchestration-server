@@ -119,7 +119,6 @@ class UserLlmKeyService(
      * | `platform` 인데 `gpt/` model | 400 `llm_key_missing`. 공용 OpenAI key 가 없다 |
      * | `platform` 인데 `claude/` model 이고 관리 화면의 Claude API key 가 없음 | 400 `llm_key_missing` |
      * | `user` 인데 model 이 없음 | 400 `invalid_request`. 어느 서비스 key 를 쓸지 정할 수 없다 |
-     * | `user` 인데 경로에 사용자 key 서비스가 없음(`bedrock/`) | 400 `llm_key_missing` |
      * | `user` 인데 그 서비스 key 가 없거나 열 수 없음 | 400 `llm_key_missing` |
      */
     suspend fun resolveForRun(appUserId: Long, modelId: String?, keySource: String?): QaRunKey {

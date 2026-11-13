@@ -1,6 +1,5 @@
 package kr.artel.orchestration.settings.service
 
-import kr.artel.orchestration.llmmodel.service.BEDROCK_MODEL_PREFIX
 import kr.artel.orchestration.llmmodel.service.CLAUDE_MODEL_PREFIX
 import kr.artel.orchestration.llmmodel.service.GPT_MODEL_PREFIX
 import org.springframework.stereotype.Component
@@ -16,7 +15,6 @@ import org.springframework.stereotype.Component
  * |---|---|
  * | `claude/` | 관리 화면의 Claude API key 가 있고 열 수 있을 때 |
  * | `gpt/` | 없음 |
- * | `bedrock/` | 있다고 본다. 호출은 agent-server 가 막는다 |
  * | 그 밖(OpenRouter) | 관리 화면의 OpenRouter key 가 있고 열 수 있을 때 |
  */
 @Component
@@ -27,7 +25,6 @@ class PlatformKeyPresence(
     suspend fun has(modelId: String): Boolean = when {
         modelId.startsWith(GPT_MODEL_PREFIX) -> false
         modelId.startsWith(CLAUDE_MODEL_PREFIX) -> anthropicKeyService.storedKey() != null
-        modelId.startsWith(BEDROCK_MODEL_PREFIX) -> true
         else -> llmKeyService.effectiveKey().apiKey != null
     }
 

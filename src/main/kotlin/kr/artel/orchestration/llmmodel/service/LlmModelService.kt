@@ -22,9 +22,6 @@ import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Instant
 
-/** 이 접두어로 시작하는 id 는 OpenRouter 가 아니라 AWS Bedrock 으로 부른다. */
-const val BEDROCK_MODEL_PREFIX = "bedrock/"
-
 /** 이 접두어로 시작하는 id 는 Claude API(Anthropic API)로 부른다. 뒤는 Anthropic model id 다. */
 const val CLAUDE_MODEL_PREFIX = "claude/"
 
@@ -33,28 +30,25 @@ const val CLAUDE_MODEL_PREFIX = "claude/"
  * 로만 고를 수 있다.
  */
 const val GPT_MODEL_PREFIX = "gpt/"
-private const val ROUTE_BEDROCK = "bedrock"
 private const val ROUTE_CLAUDE = "claude"
 private const val ROUTE_GPT = "gpt"
 private const val ROUTE_OPENROUTER = "openrouter"
 
 /** id 의 접두어로 정해지는 호출 경로. `GET /api/admin/llm-models` 의 `route` 값이다. */
 private fun routeOf(id: String): String = when {
-    id.startsWith(BEDROCK_MODEL_PREFIX) -> ROUTE_BEDROCK
     id.startsWith(CLAUDE_MODEL_PREFIX) -> ROUTE_CLAUDE
     id.startsWith(GPT_MODEL_PREFIX) -> ROUTE_GPT
     else -> ROUTE_OPENROUTER
 }
 
 /**
- * 그 model 을 사용자 key 로 부를 때 쓰는 서비스. Bedrock 경로는 사용자 key 를 받지 않아 null 이다.
+ * 그 model 을 사용자 key 로 부를 때 쓰는 서비스.
  *
  * | 경로 | 서비스 |
  * |---|---|
  * | `claude` | `anthropic` |
  * | `gpt` | `openai` |
  * | `openrouter` | `openrouter` |
- * | `bedrock` | 없음 |
  */
 fun userKeyProviderOf(modelId: String): LlmKeyProvider? = when (routeOf(modelId)) {
     ROUTE_CLAUDE -> LlmKeyProvider.ANTHROPIC
@@ -70,7 +64,7 @@ fun userKeyProviderOf(modelId: String): LlmKeyProvider? = when (routeOf(modelId)
  * |---|---|
  * | `claude` | 관리 화면의 Claude API key(`AnthropicKeyService.storedKey`)가 있을 때만 |
  * | `gpt` | 없음. 공용 OpenAI key 를 두지 않는다 |
- * | `openrouter`, `bedrock` | 있다고 본다. key 가 없어도 목록에 내고, 호출은 agent-server 가 막는다 |
+ * | `openrouter` | 있다고 본다. key 가 없어도 목록에 내고, 호출은 agent-server 가 막는다 |
  *
  * @param platformAnthropicKeyStored 관리 화면의 Claude API key 가 저장돼 있고 열 수 있는지.
  */
@@ -183,12 +177,6 @@ class LlmModelService(
         if (!model.enabled) throw LlmModelDisabledException(id)
     }
 
-    /** Bedrock key 확인이 부를 model. 켜진 Bedrock 행의 id 를 `sort_order` 순서로 돌려준다. */
-    suspend fun enabledBedrockModelIds(): List<String> =
-        repository.findAllByEnabledTrueOrderBySortOrderAsc()
-            .map { it.id }
-            .filter { it.startsWith(BEDROCK_MODEL_PREFIX) }
-
     /** Claude API key 확인이 볼 model. 켜진 `claude/` 행의 id 를 `sort_order` 순서로 돌려준다. */
     suspend fun enabledClaudeModelIds(): List<String> =
         repository.findAllByEnabledTrueOrderBySortOrderAsc()
@@ -196,7 +184,7 @@ class LlmModelService(
             .filter { it.startsWith(CLAUDE_MODEL_PREFIX) }
 
     /**
-     * OpenRouter key 하나로 닿아야 하는 model: 켜진 행 중 Bedrock, Claude API, OpenAI API 가 아닌 것, 그리고 embedding
+     * OpenRouter key 하나로 닿아야 하는 model: 켜진 행 중 Claude API, OpenAI API 가 아닌 것, 그리고 embedding
      * model(`artel.knowledge.backfill.model`). 꺼진 model 은 key 로 닿을 필요가 없다.
      */
     suspend fun requiredOpenRouterModels(): List<String> =
