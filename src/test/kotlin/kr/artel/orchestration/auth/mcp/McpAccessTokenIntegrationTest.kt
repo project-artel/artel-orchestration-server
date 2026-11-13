@@ -345,6 +345,21 @@ class McpAccessTokenIntegrationTest {
     }
 
     @Test
+    fun `macro write token 은 버전으로 빌드를 선언하고, read 만 있으면 403 insufficient_scope 다`() {
+        val world = newWorld()
+        val writer = mint(world.userId, scope = "macro:read macro:write")
+        val reader = mint(world.userId, scope = "macro:read")
+
+        val refused = call(reader, HttpMethod.POST, "${world.base}/game-builds", """{"version":"9.0.0"}""")
+        assertThat(refused.status).isEqualTo(403)
+        assertThat(refused.body["code"].asText()).isEqualTo("insufficient_scope")
+
+        val declared = call(writer, HttpMethod.POST, "${world.base}/game-builds", """{"version":"9.0.0"}""")
+        assertThat(declared.status).isEqualTo(201)
+        assertThat(declared.body["version"].asText()).isEqualTo("9.0.0")
+    }
+
+    @Test
     fun `cheat 목록은 macro read 가 없으면 403 insufficient_scope 다`() {
         val world = newWorld()
         val writeOnly = mint(world.userId, scope = "macro:write")
