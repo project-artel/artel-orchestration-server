@@ -70,11 +70,10 @@ class GameInstanceResetService(
                 actions = listOf(
                     ActionItemDto(
                         id = requestId,
-                        method = RESET_GAME,
-                        // SDK 의 ResetRequestReader 가 읽는 모양: [] 또는 [options]. clearPlayerPrefs
-                        // 는 늘 명시해 보낸다 — 생략하면 옛 서버가 보내던 씬만 리로드하는 호출과 구분이
-                        // 안 되고, "true"/"1" 같은 truthy 변환은 SDK 쪽에서 아예 거절한다(ResetRequest.cs).
-                        params = listOf(mapOf("clearPlayerPrefs" to clearPlayerPrefs)),
+                        method = "invoke_cheat",
+                        params = listOf(
+                            mapOf("name" to "reset_game", "args" to mapOf("clearPlayerPrefs" to clearPlayerPrefs)),
+                        ),
                     ),
                 ),
             ),
@@ -114,9 +113,6 @@ class GameInstanceResetService(
     }
 
     companion object {
-        /** SDK 와 맞춘 액션 이름(ARTEL-803). */
-        const val RESET_GAME = "reset_game"
-
         /** 프로세스 안에서만 뜻이 있는 번호. [ContentMapScanService][kr.artel.orchestration.contentmap.scan.ContentMapScanService] 와 같은 용도다. */
         private val REQUEST_IDS = AtomicLong()
     }

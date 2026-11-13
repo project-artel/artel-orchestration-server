@@ -91,8 +91,9 @@ class GameInstanceResetServiceTest {
                 val sent = objectMapper.readTree(json)
                 assertThat(sent["type"].asText()).isEqualTo("ACTION")
                 val action = sent["actions"][0]
-                assertThat(action["method"].asText()).isEqualTo("reset_game")
-                assertThat(action["params"][0]["clearPlayerPrefs"].asBoolean()).isFalse()
+                assertThat(action["method"].asText()).isEqualTo("invoke_cheat")
+                assertThat(action["params"][0]["name"].asText()).isEqualTo("reset_game")
+                assertThat(action["params"][0]["args"]["clearPlayerPrefs"].asBoolean()).isFalse()
             }
             .thenCancel()
             .verify(Duration.ofSeconds(5))
@@ -116,7 +117,8 @@ class GameInstanceResetServiceTest {
         StepVerifier.create(outbound)
             .assertNext { json ->
                 val action = objectMapper.readTree(json)["actions"][0]
-                assertThat(action["params"][0]["clearPlayerPrefs"].asBoolean()).isTrue()
+                assertThat(action["params"][0]["name"].asText()).isEqualTo("reset_game")
+                assertThat(action["params"][0]["args"]["clearPlayerPrefs"].asBoolean()).isTrue()
             }
             .thenCancel()
             .verify(Duration.ofSeconds(5))
