@@ -305,6 +305,26 @@ class McpAccessTokenIntegrationTest {
     }
 
     @Test
+    fun `프로젝트 생성에는 macro write가 필요하고 호출자가 OWNER가 된다`() {
+        val world = newWorld()
+        val reader = mint(world.userId, scope = "macro:read")
+        val writer = mint(world.userId, scope = "macro:write")
+        val body = """{"name":"MCP Project","genre":"ACTION","description":"Created from MCP"}"""
+
+        val refused = call(reader, HttpMethod.POST, "/api/projects", body)
+        assertThat(refused.status).isEqualTo(403)
+        assertThat(refused.body["code"].asText()).isEqualTo("insufficient_scope")
+
+        val created = call(writer, HttpMethod.POST, "/api/projects", body)
+        assertThat(created.status).isEqualTo(201)
+        assertThat(created.body["name"].asText()).isEqualTo("MCP Project")
+        assertThat(created.body["myRole"].asText()).isEqualTo("OWNER")
+        val projectId = created.body["id"].asText()
+        val projects = call(reader, HttpMethod.GET, "/api/projects")
+        assertThat(projects.body["items"].map { it["id"].asText() }).contains(projectId)
+    }
+
+    @Test
     fun `시나리오 삭제에는 scenario write와 일치하는 프로젝트가 필요하다`() {
         val world = newWorld()
         val otherProject = newWorld()
@@ -345,7 +365,7 @@ class McpAccessTokenIntegrationTest {
             HttpMethod.POST to "/api/mcp/handoffs",
             HttpMethod.GET to world.base,
             HttpMethod.GET to "${world.base}/game-builds/${world.buildId}/macros",
-            HttpMethod.POST to "/api/projects",
+            HttpMethod.DELETE to world.base,
         )
         for ((method, path) in requests) {
             val answer = call(token, method, path, if (method == HttpMethod.GET) null else "{}")

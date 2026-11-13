@@ -61,6 +61,7 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-case-folders/{folderId}/items", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-case-folders/{folderId}/items", McpScope.TESTCASE_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects", McpScope.MACRO_READ),
+    McpRoute(HttpMethod.POST, "/api/projects", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds/{buildId}/game-functions", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/macros/grammar", McpScope.MACRO_READ),
@@ -127,7 +128,7 @@ private const val SCOPE_MISSING_CODE = "insufficient_scope"
 /**
  * MCP access JWT 로 들어온 요청을 scope → 경로 허용표로 거른다(ARTEL-1088). 다른 자격증명의 요청은 건드리지 않는다.
  *
- * access JWT 가 새어도 developer macro API 와 거기 필요한 읽기 몇 개 밖으로는 못 나가게 하는 것이 목적이다.
+ * MCP access JWT 는 위에 명시한 API 와 scope 조합으로만 호출할 수 있다.
  * 그래서 허용표에 없는 경로는 scope 와 상관없이 403 이다 — `/api/auth` 아래 경로로 CLI 토큰을 찍어내거나 `/api/mcp/handoffs`
  * 로 다른 handoff 를 만드는 길이 여기서 막힌다.
  *
