@@ -160,7 +160,7 @@ class RunChatDraftIntegrationTest {
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue(mapOf("message" to text, "autoApply" to false, "draftOnly" to draftOnly))
+            .bodyValue(mapOf("message" to text, "autoApply" to false, "draftOnly" to draftOnly, "model" to "openai/gpt-6-luna", "keySource" to "platform"))
             .exchangeToMono { response ->
                 response.bodyToMono(String::class.java).defaultIfEmpty("").map { response.statusCode().value() to it }
             }

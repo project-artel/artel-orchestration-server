@@ -19,6 +19,7 @@ import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.service.AuthoringDraftStore
+import kr.artel.orchestration.testscenario.service.AuthoringModelChoices
 import kr.artel.orchestration.testscenario.service.ScenarioAbsorbService
 import kr.artel.orchestration.testscenario.service.ScenarioReconcileService
 import kr.artel.orchestration.testscenario.service.TestScenarioAgentService
@@ -51,6 +52,7 @@ class TestRunChatService(
     private val absorbService: ScenarioAbsorbService,
     private val runLocks: RunAuthoringLocks,
     private val reviewAbsorbs: kr.artel.orchestration.testscenario.service.ScenarioReviewService,
+    private val modelChoices: AuthoringModelChoices,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -95,6 +97,8 @@ class TestRunChatService(
         if (!pending && message.draftOnly) {
             throw ConflictException("고칠 draft 가 없습니다.", NO_DRAFT)
         }
+        // 고른 model 과 key 를 먼저 푼다(ARTEL-1427). 고르지 않았거나 key 가 없으면 여기서 400 이고 대화에는 아무것도 남지 않는다.
+        val choice = modelChoices.resolve(run.projectId, appUserId, message.model, message.keySource)
         val saved = runScenarioReader.currentScenarios(runId)
         agentService.sendMessage(
             sessionKey = key,
@@ -116,6 +120,7 @@ class TestRunChatService(
             answer = message.answer,
             draftOnly = message.draftOnly,
             answers = message.answers,
+            choice = choice,
         )
     }
 

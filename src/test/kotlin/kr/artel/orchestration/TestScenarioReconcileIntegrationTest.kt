@@ -659,7 +659,7 @@ class TestScenarioReconcileIntegrationTest {
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue("""{"message":"","answer":{"question_id":"$questionId","option_ids":["turn"]}}""")
+            .bodyValue("""{"model":"openai/gpt-6-luna","keySource":"platform","message":"","answer":{"question_id":"$questionId","option_ids":["turn"]}}""")
             .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
 
         awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
@@ -699,7 +699,7 @@ class TestScenarioReconcileIntegrationTest {
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
             .bodyValue(
-                """{"message":"","answers":[
+                """{"model":"openai/gpt-6-luna","keySource":"platform","message":"","answers":[
                   {"question_id":"gap:광장→숲","option_ids":[],"text":"지도를 열고 숲을 누른다"},
                   {"question_id":"gap:숲→광장","option_ids":[],"text":"숲 입구로 돌아간다"},
                   {"question_id":"gap:광장→대장간","option_ids":["${ScenarioQuestionBuilder.GAP_LEAVE}"]}
@@ -969,7 +969,7 @@ class TestScenarioReconcileIntegrationTest {
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue("""{"message":"","answer":{"question_id":"$questionId","option_ids":["turn"]}}""")
+            .bodyValue("""{"model":"openai/gpt-6-luna","keySource":"platform","message":"","answer":{"question_id":"$questionId","option_ids":["turn"]}}""")
             .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
 
         awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
@@ -1722,7 +1722,7 @@ class TestScenarioReconcileIntegrationTest {
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue("""{"message":"$msg","autoApply":$autoApply}""")
+            .bodyValue("""{"model":"openai/gpt-6-luna","keySource":"platform","message":"$msg","autoApply":$autoApply}""")
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))

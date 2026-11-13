@@ -113,7 +113,7 @@ class CaseRecommendationIntegrationTest {
         val (projectId, runId, token) = world("1")
         val base = "/api/projects/$projectId/test-runs/$runId"
 
-        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false))
+        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false, "model" to "openai/gpt-6-luna", "keySource" to "platform"))
         Thread.sleep(2000)
 
         // 추천이 남고, draft 의 그 스텝은 추천을 가리킨다. 답에도 추천이 실린다.
@@ -141,7 +141,7 @@ class CaseRecommendationIntegrationTest {
         val client = WebClient.create("http://localhost:$port")
         val (projectId, runId, token) = world("2")
         val base = "/api/projects/$projectId/test-runs/$runId"
-        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false))
+        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false, "model" to "openai/gpt-6-luna", "keySource" to "platform"))
         Thread.sleep(2000)
 
         post(client, "$base/case-recommendations/discard", token, mapOf("ids" to emptyList<String>()))
@@ -225,7 +225,7 @@ class CaseRecommendationIntegrationTest {
         val client = WebClient.create("http://localhost:$port")
         val (projectId, runId, token) = world("4")
         val base = "/api/projects/$projectId/test-runs/$runId"
-        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false))
+        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false, "model" to "openai/gpt-6-luna", "keySource" to "platform"))
         Thread.sleep(2000)
         val drafted = objectMapper.readTree(get(client, "$base/chat/draft", token))
 
