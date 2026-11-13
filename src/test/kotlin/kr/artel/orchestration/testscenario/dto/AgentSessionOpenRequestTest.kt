@@ -71,4 +71,23 @@ class AgentSessionOpenRequestTest {
 
         assertThat(json.has("reasoning")).isFalse()
     }
+
+    /** 고른 model 의 key 는 agent 계약의 `llm_key` 로 나가고(ARTEL-1427), 없으면 칸이 안 나간다. 로그에 남는 문자열에는 key 가 없다. */
+    @Test
+    fun `사용자 key 는 llm_key 로 나가고 toString 에는 남지 않는다`() {
+        val key = kr.artel.orchestration.qa.service.QaSessionLlmKey(service = "anthropic", apiKey = "sk-ant-secret")
+        val withKey = AgentSessionOpenRequest(userInput = "x", locale = "ko", projectId = 1, runId = 2, model = "claude/claude-sonnet-5-5", llmKey = key)
+        val withoutKey = AgentSessionOpenRequest(userInput = "x", locale = "ko", projectId = 1, runId = 2)
+        val turn = AgentTurnMessage(userInput = "y", model = "claude/claude-sonnet-5-5", llmKey = key)
+
+        val json = objectMapper.readTree(objectMapper.writeValueAsString(withKey))
+        val turnJson = objectMapper.readTree(objectMapper.writeValueAsString(turn))
+
+        assertThat(json["llm_key"]["service"].asText()).isEqualTo("anthropic")
+        assertThat(json["llm_key"]["api_key"].asText()).isEqualTo("sk-ant-secret")
+        assertThat(turnJson["llm_key"]["api_key"].asText()).isEqualTo("sk-ant-secret")
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(withoutKey)).has("llm_key")).isFalse()
+        assertThat(withKey.toString()).doesNotContain("sk-ant-secret")
+        assertThat(turn.toString()).doesNotContain("sk-ant-secret")
+    }
 }

@@ -153,6 +153,12 @@ data class AgentSessionOpenRequest(
      * 기본값 리터럴이다.
      */
     @param:JsonProperty("starting_values") val startingValues: Map<String, String> = emptyMap(),
+    /**
+     * 사용자가 고른 [model] 을 부를 사용자 · 프로젝트 key(ARTEL-1427). 없으면 공용 key 다. agent 는 세션 동안만 쥐고
+     * 로그 · 응답에 내지 않는다.
+     */
+    @param:JsonProperty("llm_key") @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val llmKey: kr.artel.orchestration.qa.service.QaSessionLlmKey? = null,
 )
 
 /**
@@ -178,6 +184,9 @@ data class AgentTurnMessage(
     val testCaseList: List<kr.artel.orchestration.testcase.dto.AuthoringTestCase>? = null,
     @param:JsonProperty("starting_values") @get:JsonInclude(JsonInclude.Include.NON_NULL)
     val startingValues: Map<String, String>? = null,
+    /** [model] 과 함께 바뀌는 key(ARTEL-1427). [model] 을 바꾼 턴에 없으면 그 model 은 공용 key 로 돈다. */
+    @param:JsonProperty("llm_key") @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val llmKey: kr.artel.orchestration.qa.service.QaSessionLlmKey? = null,
 )
 
 /**

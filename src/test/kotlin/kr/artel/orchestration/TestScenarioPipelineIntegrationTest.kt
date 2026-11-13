@@ -227,7 +227,7 @@ class TestScenarioPipelineIntegrationTest {
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue("""{"message":"$msg"}""")
+            .bodyValue("""{"model":"openai/gpt-6-luna","keySource":"platform","message":"$msg"}""")
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))
@@ -270,8 +270,8 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(openNode.get("run_id").asLong()).isEqualTo(runId)
         // locale 미설정 사용자는 en으로 전달된다(계정에 locale을 고른 적 없음).
         assertThat(openNode.get("locale").asText()).isEqualTo("en")
-        // 설정하지 않은 모델은 보내지 않는다. 모델 카탈로그를 소유한 Agent가 기본값을 정한다.
-        assertThat(openNode.has("model")).isFalse()
+        // 기본 모델은 없다 — 사용자가 고른 모델로 연다(ARTEL-1427).
+        assertThat(openNode.get("model").asText()).isEqualTo("openai/gpt-6-luna")
         // 빈 런으로 열었으니 current_scenarios는 빈 배열로 실린다.
         assertThat(openNode.get("current_scenarios").isArray).isTrue()
         assertThat(openNode.get("current_scenarios")).isEmpty()

@@ -127,7 +127,7 @@ class RunAuthoringOverwriteIntegrationTest {
 
         client.post().uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON).cookie("artel_access_token", token)
-            .bodyValue("""{"message":"두 시나리오를 고쳐 줘"}""")
+            .bodyValue("""{"model":"openai/gpt-6-luna","keySource":"platform","message":"두 시나리오를 고쳐 줘"}""")
             .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
 
         // 첫째가 저장되면 잠금이 첫째로 좁혀진다. 그 틈에 사람이 둘째의 제목만 고친다.

@@ -114,7 +114,7 @@ class AgentDisconnectIntegrationTest {
             .uri("/api/projects/${project.id}/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue(mapOf("message" to "메뉴 시나리오 만들어줘", "autoApply" to true))
+            .bodyValue(mapOf("message" to "메뉴 시나리오 만들어줘", "autoApply" to true, "model" to "openai/gpt-6-luna", "keySource" to "platform"))
             .retrieve().toBodilessEntity().block(Duration.ofSeconds(10))
         Thread.sleep(2000)
         stream.dispose()

@@ -25,7 +25,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
-import kr.artel.orchestration.settings.service.FeatureModelService
+import kr.artel.orchestration.qa.service.QaSessionLlmKey
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -109,7 +109,6 @@ class TestScenarioAgentService(
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     agentProperties: AgentServerProperties,
-    private val featureModels: FeatureModelService,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val runMessageRepository: TestRunMessageRepository,
@@ -175,6 +174,8 @@ class TestScenarioAgentService(
         answers: List<ScenarioQuestionAnswer> = emptyList(),
         batchIds: List<String>? = null,
         batchChanged: Boolean = false,
+        /** 사용자가 고른 model 과 key(ARTEL-1427). 기본 model 은 없다 — 고르지 않은 말은 [TestRunChatService] 가 거절한다. */
+        choice: AuthoringModelChoice,
     ) {
         // **질문지 한 묶음의 답은 한 번에 받는다.** 하나 답할 때마다 보내면 질문 넷에 요청이 넷 나가고, 둘째부터는
         // 앞선 턴이 도는 중이라 막혔다. 답마다 계약 · 길은 따로 남기고, 모델에게는 한 줄로 모아 한 번 보낸다. 경로 공백은
@@ -185,7 +186,7 @@ class TestScenarioAgentService(
                 sessionKey, runId, projectId, appUserId,
                 listOfNotNull(composed.ifBlank { null }, userInput.ifBlank { null }).joinToString("\n\n"),
                 autoApply, currentScenarios, null, draftOnly,
-                batchIds = answers.map { it.questionId }, batchChanged = changed,
+                batchIds = answers.map { it.questionId }, batchChanged = changed, choice = choice,
             )
         }
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
@@ -340,11 +341,14 @@ class TestScenarioAgentService(
             val version = authoringVersions.of(runId)
             val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
             val caseIds = cases.map { it.id }.toSet()
+            // 고른 model · key 가 세션의 것과 다르면 이 턴에 함께 싣는다(ARTEL-1427). 세션을 다시 열면 대화 기억이
+            // 사라지므로 열린 세션의 model 만 갈아 끼운다.
+            val switch = modelSwitch(existing, choice)
             if (contractsChanged || caseIds != existing.sentCaseIds) {
                 existing.sentCaseIds = caseIds
-                sendTurn(sessionKey, existing, turnInput, currentScenarios, cases, testCaseService.startingValues(projectId))
+                sendTurn(sessionKey, existing, turnInput, currentScenarios, cases, testCaseService.startingValues(projectId), switch)
             } else {
-                sendTurn(sessionKey, existing, turnInput, currentScenarios)
+                sendTurn(sessionKey, existing, turnInput, currentScenarios, switch = switch)
             }
         } else {
             // **세션 열기는 요청과 떼어 돌린다.** 처음 여는 프로젝트는 계약 정리로 몇 분이 걸리는데, 그동안 요청을 붙잡고
@@ -352,7 +356,7 @@ class TestScenarioAgentService(
             // 결과와 실패는 늘 그렇듯 SSE 로 간다.
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
+                    openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly, choice)
                     progress(sessionKey, AuthoringStage.SENT)
                     watch(sessionKey, runId, appUserId)
                 } catch (e: CancellationException) {
@@ -635,13 +639,14 @@ class TestScenarioAgentService(
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
         draftOnly: Boolean = false,
+        choice: AuthoringModelChoice,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
-        // 저장된 model → 환경 변수 → 공용 key 가 유효한 provider 의 model → agent-server 기본값 순이다. 세션을 열 때마다 읽는다.
-        val configuredModel = featureModels.resolveAuthoringModel().orEmpty()
+        // 사용자가 고른 model 로 연다(ARTEL-1427). 기본 model 은 없다. key 는 고른 것만 싣는다 — 공용 key 면 없다.
+        val configuredModel = choice.model
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
@@ -660,7 +665,7 @@ class TestScenarioAgentService(
             runId, "판을 연다",
             "말: $userInput\n" +
                 "케이스 ${cases.size}건 ${trace.blob(runId, "cases.json", objectMapper.writeValueAsString(cases))}\n" +
-                "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
+                "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} (${choice.keySource.wire} key) · 말투: $locale · " +
                 "이미 있는 시나리오 ${currentScenarios.size}개",
         )
         // **흐름을 끄면 짝 행렬도 안 푼다**(실험). 안 보낼 값을 계산할 이유가 없다 —
@@ -679,6 +684,7 @@ class TestScenarioAgentService(
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
+            llmKey = choice.llmKey,
             reasoning = experiment.reasoningMaxTokens
                 .takeIf { it > 0 }
                 ?.let { AgentReasoning(maxTokens = it) },
@@ -707,6 +713,8 @@ class TestScenarioAgentService(
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
         sessions[sessionKey]?.sentCaseIds = cases.map { it.id }.toSet()
         sessions[sessionKey]?.draftOnly = draftOnly
+        sessions[sessionKey]?.model = body.model
+        sessions[sessionKey]?.llmKey = body.llmKey
         sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
         sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
         sessions[sessionKey]?.shownHeads = shownHeadsOf(currentScenarios)
@@ -1740,6 +1748,17 @@ class TestScenarioAgentService(
         return "앞서 물어본 것(${pending.text})에 대한 답: $body"
     }
 
+    /** 턴에 실을 model 교체. agent 는 model 을 바꾼 턴의 key 를 함께 바꾼다 — 없으면 공용 key 다. */
+    private data class ModelSwitch(val model: String, val llmKey: QaSessionLlmKey?)
+
+    /**
+     * 이번 턴에 고른 model · key 가 세션이 쓰던 것과 다르면 교체를 낸다(ARTEL-1427). 공용 key 로 바꾸면 key 칸이 빈다 —
+     * 앞서 사용자 key 로 돌던 대화가 공용 key 의 model 을 고른 뒤에도 그 key 로 돌면 안 된다. 세션에 적는 것은 턴을
+     * 보낸 뒤다([sendTurn]) — 보내기가 실패했는데 적어 두면 다음 턴이 교체를 다시 싣지 않는다.
+     */
+    private fun modelSwitch(session: AgentSession, choice: AuthoringModelChoice): ModelSwitch? =
+        if (choice.model == session.model && choice.llmKey == session.llmKey) null else ModelSwitch(choice.model, choice.llmKey)
+
     private fun sendTurn(
         sessionKey: String,
         session: AgentSession,
@@ -1747,13 +1766,16 @@ class TestScenarioAgentService(
         currentScenarios: List<CurrentScenario>,
         refreshedCases: List<kr.artel.orchestration.testcase.dto.AuthoringTestCase>? = null,
         refreshedStart: Map<String, String>? = null,
+        switch: ModelSwitch? = null,
     ) {
         val json = objectMapper.writeValueAsString(
             AgentTurnMessage(
                 userInput = userInput, currentScenarios = currentScenarios,
                 testCaseList = refreshedCases, startingValues = refreshedStart,
+                model = switch?.model, llmKey = switch?.llmKey,
             )
         )
+        switch?.let { trace.record(session.runId, "모델을 바꾼다", "${it.model} (${if (it.llmKey == null) "platform" else "own"} key)") }
         trace.record(
             session.runId, "▶ 턴을 보낸다",
             "$userInput\n지금 시나리오 ${currentScenarios.size}개를 함께 보여 준다",
@@ -1761,6 +1783,10 @@ class TestScenarioAgentService(
         val result = session.outbound.tryEmitNext(json)
         if (result.isFailure) {
             throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
+        }
+        switch?.let {
+            session.model = it.model
+            session.llmKey = it.llmKey
         }
     }
 
@@ -2334,6 +2360,9 @@ class TestScenarioAgentService(
          * 센다. [submitLock] 아래에서만 는다.
          */
         @Volatile var declined: Int = 0,
+        /** 이 세션의 agent 가 지금 쓰는 model 과 key(ARTEL-1427). 고른 것이 바뀐 턴에만 다시 보낸다. */
+        @Volatile var model: String? = null,
+        @Volatile var llmKey: QaSessionLlmKey? = null,
         /** 이 세션에 보낸 TC 목록의 id. 프로젝트 TC 가 이것과 달라지면 다음 턴에 목록을 다시 보낸다. */
         @Volatile var sentCaseIds: Set<Long> = emptySet(),
         /**
