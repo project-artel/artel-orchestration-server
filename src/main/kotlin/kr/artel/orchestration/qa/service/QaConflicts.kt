@@ -1,6 +1,8 @@
 package kr.artel.orchestration.qa.service
 
+import com.fasterxml.jackson.annotation.JsonFormat
 import kr.artel.orchestration.common.error.ConflictException
+import java.time.Instant
 
 /*
  * QA 시작이 거절되는 사유들. 셋 다 409라서 상태코드로는 갈리지 않고, 클라이언트는 **`code`로**
@@ -32,8 +34,26 @@ class EmptyTestRunException :
  * 승인된 것만 돌리지 않는 것은 사용자가 고른 런과 다른 범위가 결과로 남기 때문이다. Test Case 는 고치면 이전 내용이 남지 않아
  * 옛 내용으로도 돌릴 수 없다. 화면이 `message` 를 그대로 보여 주므로 건수를 문장에 넣는다.
  */
-class TestRunReviewPendingException(pendingScenarios: Int, pendingCases: Int) :
-    ConflictException(reviewPendingMessage(pendingScenarios, pendingCases), code = "test_run_review_pending")
+data class QaPendingReviewItem(
+    val id: String,
+    val label: String,
+    @get:JsonFormat(shape = JsonFormat.Shape.STRING)
+    val updatedAt: Instant,
+)
+
+data class QaPendingReview(
+    val scenarios: List<QaPendingReviewItem>,
+    val cases: List<QaPendingReviewItem>,
+) {
+    fun isEmpty() = scenarios.isEmpty() && cases.isEmpty()
+}
+
+data class QaReviewVersion(val id: String, val updatedAt: Instant)
+
+data class QaReviewConfirmation(val scenarios: List<QaReviewVersion>, val cases: List<QaReviewVersion>)
+
+class TestRunReviewPendingException(val pending: QaPendingReview) :
+    ConflictException(reviewPendingMessage(pending.scenarios.size, pending.cases.size), code = "test_run_review_pending")
 
 private fun reviewPendingMessage(pendingScenarios: Int, pendingCases: Int): String {
     val pending = when {

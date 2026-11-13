@@ -21,6 +21,8 @@ import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.SdkDisconnectedException
 import kr.artel.orchestration.qa.service.TestRunReviewPendingException
+import kr.artel.orchestration.qa.service.QaReviewConfirmation
+import kr.artel.orchestration.qa.service.QaReviewVersion
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
@@ -172,6 +174,40 @@ class QaDraftReviewIntegrationTest {
         caseReviews.decide(case.projectId, draftCaseId, userId, ReviewDecisionRequest(ReviewDecision.APPROVE, item.updatedAt))
         assertThatThrownBy { runBlocking { service.createRun(testRunId, instanceId, userId) } }
             .describedAs("승인하면 시나리오를 고치지 않아도 풀린다").isInstanceOf(SdkDisconnectedException::class.java)
+    }
+
+    @Test
+    fun `QA 시작을 막는 시나리오와 TC만 확인 후 일괄 승인한다`(): Unit = runBlocking {
+        val scenario = scenarios.findById(draftScenarioId)!!
+        scenarios.save(scenario.copy(reviewStatus = "DRAFT"))
+        val otherCase = cases.save(cases.findById(draftCaseId)!!.copy(id = null, step = "Other"))
+        val pending = refusedRun().pending
+        val pendingScenario = pending.scenarios.single()
+        val pendingCase = pending.cases.single()
+        assertThat(pendingScenario.id).isEqualTo(draftScenarioId.toString())
+        assertThat(pendingCase.id).isEqualTo(draftCaseId.toString())
+        assertThat(pendingCase.label).isEqualTo("Start")
+
+        val confirmation = QaReviewConfirmation(
+            listOf(QaReviewVersion(pendingScenario.id, pendingScenario.updatedAt)),
+            listOf(QaReviewVersion(pendingCase.id, pendingCase.updatedAt)),
+        )
+        assertThrows(TestRunReviewPendingException::class.java) {
+            runBlocking {
+                service.approvePendingRunReview(testRunId, userId, confirmation.copy(
+                    scenarios = listOf(QaReviewVersion(pendingScenario.id, Instant.EPOCH)),
+                ))
+            }
+        }
+        assertThat(cases.findById(draftCaseId)!!.reviewStatus).isEqualTo("DRAFT")
+        service.approvePendingRunReview(testRunId, userId, confirmation)
+        service.approvePendingRunReview(testRunId, userId, confirmation)
+        assertThat(cases.findById(draftCaseId)!!.reviewStatus).isEqualTo("READY")
+        assertThat(scenarios.findById(draftScenarioId)!!.reviewStatus).isEqualTo("READY")
+        assertThat(cases.findById(otherCase.id!!)!!.reviewStatus).isEqualTo("DRAFT")
+        assertThrows(SdkDisconnectedException::class.java) {
+            runBlocking { service.createRun(testRunId, instanceId, userId) }
+        }
     }
 
     @Test

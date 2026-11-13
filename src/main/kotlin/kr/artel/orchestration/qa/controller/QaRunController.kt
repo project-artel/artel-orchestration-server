@@ -18,6 +18,7 @@ import kr.artel.orchestration.stream.service.QaMediaRelay
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.QaReviewConfirmation
 import kr.artel.orchestration.qa.service.QaVerdictService
 import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toRunGates
@@ -86,6 +87,16 @@ class QaRunController(
                 inputMode = request.toInputMode()
             )
         )
+    }
+
+    @PostMapping("/pending-review/{testRunId}")
+    suspend fun approvePendingRunReview(
+        @PathVariable testRunId: String,
+        @RequestBody confirmation: QaReviewConfirmation,
+        @CurrentUserId appUserId: Long,
+    ): ResponseEntity<Void> {
+        qaTryService.approvePendingRunReview(parseId(testRunId), appUserId, confirmation)
+        return ResponseEntity.noContent().build()
     }
 
     /** 런 하나 + 시나리오별 try 상태. FE 런 화면이 종단까지 폴링하는 개요. */

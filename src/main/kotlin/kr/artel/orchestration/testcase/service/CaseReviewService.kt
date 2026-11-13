@@ -14,6 +14,7 @@ import kr.artel.orchestration.testcase.entity.ReviewStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.CaseRecommendationService
 import org.springframework.stereotype.Service
+import java.time.Instant
 
 /**
  * MCP 로 만든 Test Case 의 승인 대기와 결정.
@@ -49,13 +50,26 @@ class CaseReviewService(
     }
 
     suspend fun decide(projectId: Long, caseId: Long, userId: Long, request: ReviewDecisionRequest) {
-        if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
-        val changed = when (request.decision) {
-            ReviewDecision.APPROVE -> testCases.approveDraft(caseId, projectId, request.expectedUpdatedAt)
-            ReviewDecision.REJECT -> testCases.rejectDraft(caseId, projectId, request.expectedUpdatedAt)
+        if (request.decision == ReviewDecision.APPROVE) {
+            approveDraft(projectId, caseId, userId, request.expectedUpdatedAt)
+            finishApproval(projectId, caseId, userId)
+            return
         }
+        if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
+        val changed = testCases.rejectDraft(caseId, projectId, request.expectedUpdatedAt)
         if (changed == 0) throw refusal(projectId, caseId, request)
-        if (request.decision == ReviewDecision.APPROVE) recommendations.linkApproved(caseId, userId)
+        projectChanges.notify(projectId, ProjectChangeTopic.TEST_CASES)
+    }
+
+    internal suspend fun approveDraft(projectId: Long, caseId: Long, userId: Long, expectedUpdatedAt: Instant) {
+        if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
+        if (testCases.approveDraft(caseId, projectId, expectedUpdatedAt) == 0) {
+            throw refusal(projectId, caseId, ReviewDecisionRequest(ReviewDecision.APPROVE, expectedUpdatedAt))
+        }
+    }
+
+    internal suspend fun finishApproval(projectId: Long, caseId: Long, userId: Long) {
+        recommendations.linkApproved(caseId, userId)
         projectChanges.notify(projectId, ProjectChangeTopic.TEST_CASES)
     }
 
