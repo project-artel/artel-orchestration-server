@@ -50,7 +50,7 @@ class GameInstanceResetService(
      * 경로의 [projectId] 까지 보는 이유는 [GameInstanceRepository.findAccessibleById] 의 KDoc 과
      * 같다 — 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다.
      */
-    suspend fun reset(userId: Long, projectId: Long, instanceId: Long, clearPlayerPrefs: Boolean): GameInstanceResetResponse? {
+    suspend fun reset(userId: Long, projectId: Long, instanceId: Long): GameInstanceResetResponse? {
         instanceRepository.findAccessibleById(instanceId, projectId, userId) ?: return null
 
         if (!sessionManager.hasSession(instanceId.toString())) {
@@ -72,7 +72,7 @@ class GameInstanceResetService(
                         id = requestId,
                         method = "invoke_cheat",
                         params = listOf(
-                            mapOf("name" to "reset_game", "args" to mapOf("clearPlayerPrefs" to clearPlayerPrefs)),
+                            mapOf("name" to "reset_game"),
                         ),
                     ),
                 ),
@@ -80,13 +80,12 @@ class GameInstanceResetService(
         )
         val requestedAt = Instant.now(clock)
         logger.info(
-            "게임 인스턴스 초기화 요청 [instanceId={}, clearPlayerPrefs={}, requestId={}]",
-            instanceId, clearPlayerPrefs, requestId,
+            "게임 인스턴스 초기화 요청 [instanceId={}, requestId={}]",
+            instanceId, requestId,
         )
 
         return GameInstanceResetResponse(
             gameInstanceId = instanceId.toString(),
-            clearPlayerPrefs = clearPlayerPrefs,
             requestedAt = requestedAt,
         )
     }

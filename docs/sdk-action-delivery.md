@@ -12,7 +12,7 @@ QA 요청의 기존 outer `id`를 그대로 사용한다. 예시는 테스트의
 {
   "type": "ACTION",
   "id": 45228,
-  "actions": [{"id": 1, "jsonrpc": "2.0", "method": "invoke_cheat", "params": [{"name": "reset_game", "args": {"clearPlayerPrefs": true}}]}],
+  "actions": [{"id": 1, "jsonrpc": "2.0", "method": "invoke_cheat", "params": [{"name": "reset_game"}]}],
   "delivery": {"processId": "11111111-1111-1111-1111-111111111111", "expiresAtUnixMs": 1800000025000}
 }
 ```

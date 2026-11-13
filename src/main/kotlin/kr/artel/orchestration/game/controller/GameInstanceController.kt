@@ -9,7 +9,6 @@ import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.game.dto.GameInstanceListResponse
 import kr.artel.orchestration.game.dto.GameInstanceResetResponse
 import kr.artel.orchestration.game.dto.GameInstanceResponse
-import kr.artel.orchestration.game.dto.ResetGameInstanceRequest
 import kr.artel.orchestration.game.dto.UpdateGameInstanceRequest
 import kr.artel.orchestration.game.service.GameInstanceResetService
 import kr.artel.orchestration.game.service.GameInstanceService
@@ -79,8 +78,6 @@ class GameInstanceController(
      * 붙어 있는 게임 하나를 초기화한다. QA 세션 밖에서 여는 첫 문이다(ARTEL-803) — 런을 시작하기
      * 전에 알려진 상태로 되돌리거나, 죽은 런이 이상하게 남긴 게임을 되돌리는 데 쓴다.
      *
-     * 본문은 없어도 된다. 그때 `clearPlayerPrefs` 는 false 다.
-     *
      * 상태코드 셋이 서로 다른 말을 한다:
      * - **404** — 인스턴스가 없거나 참여자가 아니다(존재 여부조차 알리지 않는다)
      * - **409** — 인스턴스는 있는데 붙어 있는 게임이 없다, 또는 그 인스턴스에서 QA 런(또는 시도)이
@@ -89,8 +86,8 @@ class GameInstanceController(
      */
     @Operation(
         summary = "게임 인스턴스 초기화",
-        description = "붙어 있는 게임에 reset_game 을 보낸다. clearPlayerPrefs 를 true 로 주면 " +
-            "PlayerPrefs(저장소)도 함께 비운다. 붙어 있지 않으면 409, 그 인스턴스에서 QA 런이나 " +
+        description = "붙어 있는 게임의 reset_game 내장 치트를 호출한다. 기본 구현은 " +
+            "게임 PlayerPrefs와 static 상태를 초기화한다. 붙어 있지 않으면 409, 그 인스턴스에서 QA 런이나 " +
             "시도가 진행 중이면 409.",
     )
     @PostMapping("/{instanceId}/reset")
@@ -99,9 +96,8 @@ class GameInstanceController(
         @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "게임 인스턴스 id", required = true) @PathVariable instanceId: Long,
-        @RequestBody(required = false) request: ResetGameInstanceRequest?
     ): GameInstanceResetResponse =
-        resetService.reset(appUserId, projectId, instanceId, request?.clearPlayerPrefs ?: false)
+        resetService.reset(appUserId, projectId, instanceId)
             ?: throw instanceNotFound()
 
     /** 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다. */

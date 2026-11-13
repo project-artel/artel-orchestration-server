@@ -70,9 +70,8 @@ class GameInstanceResetServiceTest {
         db.deleteQaRuns()
     }
 
-    /** 파라미터를 생략한 기본 호출은 clearPlayerPrefs=false 로 나간다. */
     @Test
-    fun `붙어 있는 인스턴스에 reset_game 이 clearPlayerPrefs=false 로 나간다`(): Unit = runBlocking {
+    fun `붙어 있는 인스턴스에 reset_game 내장 치트를 인자 없이 호출한다`(): Unit = runBlocking {
         val userId = newUser()
         val projectId = newProject(userId)
         val instanceId = newInstance(projectId)
@@ -80,11 +79,10 @@ class GameInstanceResetServiceTest {
             sessionManager.register(instanceId.toString(), mockSession())
         )
 
-        val response = reset.reset(userId, projectId, instanceId, clearPlayerPrefs = false)
+        val response = reset.reset(userId, projectId, instanceId)
 
         assertThat(response).isNotNull()
         assertThat(response!!.gameInstanceId).isEqualTo(instanceId.toString())
-        assertThat(response.clearPlayerPrefs).isFalse()
 
         StepVerifier.create(outbound)
             .assertNext { json ->
@@ -93,7 +91,7 @@ class GameInstanceResetServiceTest {
                 val action = sent["actions"][0]
                 assertThat(action["method"].asText()).isEqualTo("invoke_cheat")
                 assertThat(action["params"][0]["name"].asText()).isEqualTo("reset_game")
-                assertThat(action["params"][0]["args"]["clearPlayerPrefs"].asBoolean()).isFalse()
+                assertThat(action["params"][0].has("args")).isFalse()
             }
             .thenCancel()
             .verify(Duration.ofSeconds(5))
@@ -101,42 +99,13 @@ class GameInstanceResetServiceTest {
         detach(instanceId)
     }
 
-    /** clearPlayerPrefs=true 도 그대로 SDK 로 실려 간다 — 요청값이 조용히 false 로 떨어지지 않는다. */
-    @Test
-    fun `clearPlayerPrefs=true 는 그대로 페이로드에 실린다`(): Unit = runBlocking {
-        val userId = newUser()
-        val projectId = newProject(userId)
-        val instanceId = newInstance(projectId)
-        val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), mockSession())
-        )
-
-        val response = reset.reset(userId, projectId, instanceId, clearPlayerPrefs = true)
-
-        assertThat(response!!.clearPlayerPrefs).isTrue()
-        StepVerifier.create(outbound)
-            .assertNext { json ->
-                val action = objectMapper.readTree(json)["actions"][0]
-                assertThat(action["params"][0]["name"].asText()).isEqualTo("reset_game")
-                assertThat(action["params"][0]["args"]["clearPlayerPrefs"].asBoolean()).isTrue()
-            }
-            .thenCancel()
-            .verify(Duration.ofSeconds(5))
-
-        detach(instanceId)
-    }
-
-    /**
-     * 인스턴스는 있는데 **안 붙어 있으면 409** 다. 200 으로 답하고 아무 일도 안 일어나는 조용한
-     * 실패를 두지 않는다 — `ContentMapScanService` 가 이미 같은 자리에서 같은 선택을 했다.
-     */
     @Test
     fun `게임이 안 붙어 있으면 409 다`(): Unit = runBlocking {
         val userId = newUser()
         val projectId = newProject(userId)
         val instanceId = newInstance(projectId)   // 행은 있지만 세션이 없다
 
-        assertThatThrownBy { runBlocking { reset.reset(userId, projectId, instanceId, false) } }
+        assertThatThrownBy { runBlocking { reset.reset(userId, projectId, instanceId) } }
             .isInstanceOf(ConflictException::class.java)
             .extracting { (it as ApiException).code }
             .isEqualTo("game_instance_not_connected")
@@ -151,7 +120,7 @@ class GameInstanceResetServiceTest {
         val instanceId = newInstance(projectId)
         sessionManager.register(instanceId.toString(), mockSession())
 
-        assertThat(reset.reset(stranger, projectId, instanceId, false)).isNull()
+        assertThat(reset.reset(stranger, projectId, instanceId)).isNull()
 
         detach(instanceId)
     }
@@ -165,7 +134,7 @@ class GameInstanceResetServiceTest {
         val instanceId = newInstance(mine)
         sessionManager.register(instanceId.toString(), mockSession())
 
-        assertThat(reset.reset(userId, other, instanceId, false)).isNull()
+        assertThat(reset.reset(userId, other, instanceId)).isNull()
 
         detach(instanceId)
     }
@@ -192,7 +161,7 @@ class GameInstanceResetServiceTest {
             )
         )
 
-        assertThatThrownBy { runBlocking { reset.reset(userId, projectId, instanceId, false) } }
+        assertThatThrownBy { runBlocking { reset.reset(userId, projectId, instanceId) } }
             .isInstanceOf(ConflictException::class.java)
             .hasMessageContaining("id=${activeRun.id}")
             .extracting { (it as ApiException).code }
@@ -219,7 +188,7 @@ class GameInstanceResetServiceTest {
             )
         )
 
-        assertThatThrownBy { runBlocking { reset.reset(userId, projectId, instanceId, false) } }
+        assertThatThrownBy { runBlocking { reset.reset(userId, projectId, instanceId) } }
             .isInstanceOf(ConflictException::class.java)
             .hasMessageContaining("id=${activeTry.id}")
             .extracting { (it as ApiException).code }
