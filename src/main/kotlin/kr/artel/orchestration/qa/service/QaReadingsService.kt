@@ -38,7 +38,7 @@ class QaReadingsService(
 
     /** 런이 시작했다. 이 인스턴스의 판독을 켠다. */
     suspend fun start(gameInstanceId: Long) {
-        send(gameInstanceId, START_READINGS)
+        send(gameInstanceId, SUBSCRIBE_PULSE)
     }
 
     /**
@@ -59,7 +59,7 @@ class QaReadingsService(
     suspend fun stopIfIdle(gameInstanceId: Long) {
         if (tryRepository.findActiveByGameInstanceId(gameInstanceId) != null) return
         if (runRepository.findActiveByGameInstanceId(gameInstanceId) != null) return
-        send(gameInstanceId, STOP_READINGS)
+        send(gameInstanceId, UNSUBSCRIBE_PULSE)
     }
 
     private suspend fun send(gameInstanceId: Long, method: String) {
@@ -69,7 +69,11 @@ class QaReadingsService(
                 gameInstanceId.toString(),
                 ActionResponseDto(
                     id = requestId,
-                    actions = listOf(ActionItemDto(id = requestId, method = method, params = emptyList())),
+                    actions = listOf(ActionItemDto(
+                        id = requestId,
+                        method = method,
+                        params = if (method == SUBSCRIBE_PULSE) listOf(PulseSubscriptionOptions(force = true)) else emptyList(),
+                    )),
                 ),
             )
             logger.info("판독 {} 요청 [gameInstanceId={}, requestId={}]", method, gameInstanceId, requestId)
@@ -85,9 +89,13 @@ class QaReadingsService(
         }
     }
 
+    private data class PulseSubscriptionOptions(val force: Boolean)
+
     private companion object {
-        const val START_READINGS = "start_readings"
-        const val STOP_READINGS = "stop_readings"
+        // SDK의 canonical 명령은 subscribe_pulse/unsubscribe_pulse다. 구형 게임도 시작·종료할 수 있도록
+        // wire는 호환 별칭을 사용한다. 새 SDK는 force로 whole을 보내며 구형 SDK는 모르는 옵션을 무시한다.
+        const val SUBSCRIBE_PULSE = "start_readings"
+        const val UNSUBSCRIBE_PULSE = "stop_readings"
 
         /**
          * 프로세스 안에서만 뜻이 있는 번호.
