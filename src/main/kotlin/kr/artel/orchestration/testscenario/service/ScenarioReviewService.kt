@@ -20,10 +20,12 @@ import kr.artel.orchestration.testscenario.dto.ScenarioReviewItem
 import kr.artel.orchestration.testscenario.dto.ScenarioReviewRun
 import kr.artel.orchestration.testscenario.dto.ScenarioReviewStep
 import kr.artel.orchestration.testscenario.entity.toDraft
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
+import java.time.Instant
 
 /**
  * MCP 로 만든 시나리오의 승인 대기와 결정.
@@ -86,21 +88,32 @@ class ScenarioReviewService(
     }
 
     suspend fun decide(projectId: Long, scenarioId: Long, appUserId: Long, request: ReviewDecisionRequest) {
+        if (request.decision == ReviewDecision.APPROVE) {
+            finishApproval(approveDraft(projectId, scenarioId, appUserId, request.expectedUpdatedAt))
+            return
+        }
+        if (!accessService.isMember(projectId, appUserId)) throw NotFoundException()
+        scenarios.findById(scenarioId)?.takeIf { it.projectId == projectId } ?: throw NotFoundException()
+        runLocks.assertScenarioWritable(scenarioId)
+        val changed = reject(scenarioId, projectId, request)
+        if (changed == 0) throw refusal(projectId, scenarioId, request)
+        projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
+    }
+
+    internal suspend fun approveDraft(projectId: Long, scenarioId: Long, appUserId: Long, expectedUpdatedAt: Instant): TestScenarioEntity {
         if (!accessService.isMember(projectId, appUserId)) throw NotFoundException()
         val scenario = scenarios.findById(scenarioId)?.takeIf { it.projectId == projectId } ?: throw NotFoundException()
         runLocks.assertScenarioWritable(scenarioId)
-        val changed = when (request.decision) {
-            ReviewDecision.APPROVE -> {
-                if (scenario.reviewStatus == "DRAFT") {
-                    scenarioService.validateReviewedCases(projectId, scenario.toDraft(objectMapper))
-                }
-                scenarios.approveDraft(scenarioId, projectId, request.expectedUpdatedAt)
-            }
-            ReviewDecision.REJECT -> reject(scenarioId, projectId, request)
+        if (scenario.reviewStatus == "DRAFT") scenarioService.validateReviewedCases(projectId, scenario.toDraft(objectMapper))
+        if (scenarios.approveDraft(scenarioId, projectId, expectedUpdatedAt) == 0) {
+            throw refusal(projectId, scenarioId, ReviewDecisionRequest(ReviewDecision.APPROVE, expectedUpdatedAt))
         }
-        if (changed == 0) throw refusal(projectId, scenarioId, request)
-        if (request.decision == ReviewDecision.APPROVE) absorbService.absorbOnApproval(scenario)
-        projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
+        return scenario
+    }
+
+    internal suspend fun finishApproval(scenario: TestScenarioEntity) {
+        absorbService.absorbOnApproval(scenario)
+        projectChanges.notify(scenario.projectId, ProjectChangeTopic.TEST_RUNS)
     }
 
     private suspend fun reject(scenarioId: Long, projectId: Long, request: ReviewDecisionRequest): Int {
