@@ -15,16 +15,18 @@ import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.testcase.service.ManualCaseVersionService
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Instant
 
 /**
- * 게임 빌드는 사람이 만들지 않는다. SDK가 버전을 보고할 때 생기고([SdkRegistrationService]),
- * 여기서는 읽기와 설명 수정만 한다.
+ * 게임 빌드는 SDK가 버전을 보고할 때 생긴다([SdkRegistrationService]). 게임을 실행하기 전에 선언부터 하려는 개발자 에이전트는
+ * 버전만으로 빌드를 만들 수 있다([declare], ARTEL-1447). 두 길은 같은 [GameBuildRegistrar] 로 찾으므로, 먼저 선언한 빌드에
+ * 나중에 같은 버전의 게임이 붙는다. 여기서는 그 밖에 읽기와 설명 수정을 한다.
  *
- * 그래서 생성도 삭제도 없다. 삭제는 다음 등록에서 같은 행이 다시 생기므로, 지울 수 있다는
- * 인상만 주고 실제로는 지워지지 않는 동작이 된다.
+ * 삭제는 없다. 다음 등록에서 같은 행이 다시 생기므로, 지울 수 있다는 인상만 주고 실제로는 지워지지 않는 동작이 된다.
  *
  * 접근할 수 없는(비참여자·삭제된) 프로젝트나 빌드는 null로 응답한다 — 컨트롤러가 404로 옮긴다.
  */
@@ -35,8 +37,12 @@ class GameBuildService(
     private val sessionManager: SessionManager,
     private val projectRepository: ProjectRepository,
     private val clock: Clock,
-    private val projectChangeStreamManager: ProjectChangeStreamManager
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val buildRegistrar: GameBuildRegistrar,
+    private val manualCaseVersions: ManualCaseVersionService,
 ) {
+    private val logger = LoggerFactory.getLogger(GameBuildService::class.java)
+
     suspend fun list(userId: Long, projectId: Long): GameBuildListResponse? {
         projectRepository.findAccessibleById(projectId, userId) ?: return null
         val items = buildRepository.findAllForMember(projectId, userId)
@@ -77,6 +83,25 @@ class GameBuildService(
         return GameBuildSummaryListResponse(items)
     }
 
+    /**
+     * [version] 의 development build 를 찾고, 없으면 만든다(ARTEL-1447). 같은 버전의 editor 행은 쓰지 않는다 — SDK 의
+     * development build 등록과 같은 행을 가리켜야 하기 때문이다.
+     *
+     * 새로 만들었으면 SDK 등록과 똑같이 앞 버전의 사용자 생성 TC 를 이어 넣는다. 실패해도 빌드는 그대로다.
+     * 접근할 수 없는 프로젝트면 null 이다.
+     */
+    suspend fun declare(userId: Long, projectId: Long, version: String): DeclaredGameBuild? {
+        projectRepository.findAccessibleById(projectId, userId) ?: return null
+        val (build, created) = buildRegistrar.findOrCreate(projectId, version.trim(), isEditor = false, sceneScan = null, now = Instant.now(clock))
+        if (created) {
+            val buildId = requireNotNull(build.id)
+            runCatching { manualCaseVersions.carryOverOnNewBuild(projectId, buildId) }
+                .onFailure { logger.warn("선언한 새 버전에 사용자 TC 이어 넣기 실패 [gameBuildId=$buildId]: ${it.message}") }
+            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_BUILDS)
+        }
+        return DeclaredGameBuild(build.toResponse(), created)
+    }
+
     suspend fun update(
         userId: Long,
         projectId: Long,
@@ -115,3 +140,6 @@ class GameBuildService(
         updatedAt = updatedAt
     )
 }
+
+/** [GameBuildService.declare] 의 결과. [created] 면 이번 요청이 만들었다. */
+data class DeclaredGameBuild(val build: GameBuildResponse, val created: Boolean)

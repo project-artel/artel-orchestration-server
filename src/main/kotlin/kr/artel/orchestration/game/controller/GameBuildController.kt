@@ -10,20 +10,23 @@ import kr.artel.orchestration.game.dto.GameBuildListResponse
 import kr.artel.orchestration.game.dto.GameBuildSummaryListResponse
 import kr.artel.orchestration.game.dto.GameFunctionCatalogResponse
 import kr.artel.orchestration.game.dto.GameBuildResponse
+import kr.artel.orchestration.game.dto.DeclareGameBuildRequest
 import kr.artel.orchestration.game.dto.UpdateGameBuildRequest
 import kr.artel.orchestration.game.service.GameBuildService
 import kr.artel.orchestration.game.service.GameFunctionCatalogService
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 게임 빌드는 SDK가 보고한 버전이다. 만들거나 지우는 엔드포인트는 없다.
- *
- * 생성은 SDK 등록이 대신하고, 삭제는 다음 등록에서 같은 행이 다시 생기므로 의미가 없다.
+ * 게임 빌드는 SDK가 보고한 버전이다. 게임을 실행하기 전에는 버전만으로 선언해 만들 수 있다(ARTEL-1447). 지우는 엔드포인트는 없다 —
+ * 다음 등록에서 같은 행이 다시 생기므로 의미가 없다.
  *
  * 컨트롤러는 얇게: 상태코드 매핑(서비스가 null이면 404)만 하고, 비즈니스는 [GameBuildService].
  */
@@ -53,6 +56,21 @@ class GameBuildController(
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
     ): GameBuildSummaryListResponse =
         buildService.summaries(appUserId, projectId) ?: throw projectNotFound()
+
+    @Operation(
+        summary = "게임 빌드 선언",
+        description = "Unity Player Settings 의 버전으로 development build 를 찾고, 없으면 만든다. 만들었으면 201, 이미 있으면 " +
+            "200 이다. 나중에 SDK 가 같은 버전으로 등록하면 이 빌드에 붙는다."
+    )
+    @PostMapping
+    suspend fun declare(
+        @CurrentUserId appUserId: Long,
+        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
+        @Valid @RequestBody request: DeclareGameBuildRequest
+    ): ResponseEntity<GameBuildResponse> {
+        val declared = buildService.declare(appUserId, projectId, request.version) ?: throw projectNotFound()
+        return ResponseEntity.status(if (declared.created) HttpStatus.CREATED else HttpStatus.OK).body(declared.build)
+    }
 
     @Operation(
         summary = "게임 빌드 설명 수정",

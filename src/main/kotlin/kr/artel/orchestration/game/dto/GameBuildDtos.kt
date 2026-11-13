@@ -1,7 +1,20 @@
 package kr.artel.orchestration.game.dto
 
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import java.time.Instant
+
+/**
+ * 게임 빌드 선언 요청(ARTEL-1447). 게임을 실행하기 전에 개발자 에이전트가 Unity Player Settings 의 버전으로 빌드를 만든다.
+ * 칸 규칙은 SDK 등록의 `gameVersion` 과 같다 — 같은 값이어야 나중에 게임이 같은 빌드에 붙는다.
+ *
+ * @property version Unity Player Settings 의 버전 문자열
+ */
+data class DeclareGameBuildRequest(
+    @field:NotBlank
+    @field:Size(max = 64)
+    val version: String,
+)
 
 /**
  * 게임 빌드 수정 요청. 부분 수정이라 null인 필드는 손대지 않는다.
