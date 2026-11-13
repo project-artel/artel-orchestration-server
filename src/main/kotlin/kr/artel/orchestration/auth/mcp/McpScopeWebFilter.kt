@@ -77,6 +77,7 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/scenarios", McpScope.TESTCASE_READ),
     // 시나리오 스텝(ARTEL-1310) — MCP 가 고칠 시나리오를 찾고, 저작 결과를 직접 읽는다.
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-scenario/{testScenarioId}", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/test-scenario/{testScenarioId}", McpScope.SCENARIO_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/messages", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs", McpScope.SCENARIO_WRITE),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/message", McpScope.SCENARIO_WRITE),

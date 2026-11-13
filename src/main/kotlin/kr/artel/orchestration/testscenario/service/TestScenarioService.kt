@@ -224,8 +224,9 @@ class TestScenarioService(
      * 정리 순서: (force면) qa_try → 조합 링크(케이스 조합·런 조합) → 시나리오 본체. 한 트랜잭션으로 묶어
      * 부분 삭제 상태가 남지 않게 한다. 대화 세션은 런 단위라 여기서 닫지 않는다(런 대화는 계속된다).
      */
-    suspend fun delete(appUserId: Long, testScenarioId: Long, force: Boolean = false) {
+    suspend fun delete(appUserId: Long, testScenarioId: Long, force: Boolean = false, projectId: Long? = null) {
         val scenario = accessService.accessibleScenario(testScenarioId, appUserId) ?: throw NotFoundException()
+        if (projectId != null && scenario.projectId != projectId) throw NotFoundException()
         val runCount = qaTryRepository.countByTestScenarioId(testScenarioId)
         if (runCount > 0 && !force) {
             throw ConflictException(
