@@ -50,7 +50,7 @@ class GameInstanceResetService(
      * 경로의 [projectId] 까지 보는 이유는 [GameInstanceRepository.findAccessibleById] 의 KDoc 과
      * 같다 — 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다.
      */
-    suspend fun reset(userId: Long, projectId: Long, instanceId: Long, clearPlayerPrefs: Boolean): GameInstanceResetResponse? {
+    suspend fun reset(userId: Long, projectId: Long, instanceId: Long): GameInstanceResetResponse? {
         instanceRepository.findAccessibleById(instanceId, projectId, userId) ?: return null
 
         if (!sessionManager.hasSession(instanceId.toString())) {
@@ -70,24 +70,22 @@ class GameInstanceResetService(
                 actions = listOf(
                     ActionItemDto(
                         id = requestId,
-                        method = RESET_GAME,
-                        // SDK 의 ResetRequestReader 가 읽는 모양: [] 또는 [options]. clearPlayerPrefs
-                        // 는 늘 명시해 보낸다 — 생략하면 옛 서버가 보내던 씬만 리로드하는 호출과 구분이
-                        // 안 되고, "true"/"1" 같은 truthy 변환은 SDK 쪽에서 아예 거절한다(ResetRequest.cs).
-                        params = listOf(mapOf("clearPlayerPrefs" to clearPlayerPrefs)),
+                        method = "invoke_cheat",
+                        params = listOf(
+                            mapOf("name" to "reset_game"),
+                        ),
                     ),
                 ),
             ),
         )
         val requestedAt = Instant.now(clock)
         logger.info(
-            "게임 인스턴스 초기화 요청 [instanceId={}, clearPlayerPrefs={}, requestId={}]",
-            instanceId, clearPlayerPrefs, requestId,
+            "게임 인스턴스 초기화 요청 [instanceId={}, requestId={}]",
+            instanceId, requestId,
         )
 
         return GameInstanceResetResponse(
             gameInstanceId = instanceId.toString(),
-            clearPlayerPrefs = clearPlayerPrefs,
             requestedAt = requestedAt,
         )
     }
@@ -114,9 +112,6 @@ class GameInstanceResetService(
     }
 
     companion object {
-        /** SDK 와 맞춘 액션 이름(ARTEL-803). */
-        const val RESET_GAME = "reset_game"
-
         /** 프로세스 안에서만 뜻이 있는 번호. [ContentMapScanService][kr.artel.orchestration.contentmap.scan.ContentMapScanService] 와 같은 용도다. */
         private val REQUEST_IDS = AtomicLong()
     }
