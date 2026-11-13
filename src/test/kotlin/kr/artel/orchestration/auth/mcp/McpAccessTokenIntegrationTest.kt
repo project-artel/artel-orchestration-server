@@ -305,6 +305,26 @@ class McpAccessTokenIntegrationTest {
     }
 
     @Test
+    fun `시나리오 삭제에는 scenario write와 일치하는 프로젝트가 필요하다`() {
+        val world = newWorld()
+        val otherProject = newWorld()
+        val author = mint(world.userId, scope = "testcase:read scenario:write")
+        val reader = mint(world.userId, scope = "testcase:read")
+        val runId = call(author, HttpMethod.POST, "${world.base}/test-runs", """{"name":"mcp"}""").body["id"].asText()
+        val saved = call(
+            author, HttpMethod.POST, "${world.base}/test-runs/$runId/scenarios/commit",
+            """{"draft":true,"scenarios":[{"title":"삭제 대상","steps":[{"action":"메뉴를 연다"}]}]}""",
+        )
+        val scenarioId = saved.body["items"].single()["testScenarioId"].asText()
+        val path = "${world.base}/test-scenario/$scenarioId"
+
+        assertThat(call(reader, HttpMethod.DELETE, path).body["code"].asText()).isEqualTo("insufficient_scope")
+        assertThat(call(author, HttpMethod.DELETE, "${otherProject.base}/test-scenario/$scenarioId").status).isEqualTo(404)
+        assertThat(call(author, HttpMethod.DELETE, path).status).isEqualTo(204)
+        assertThat(call(author, HttpMethod.GET, path).status).isEqualTo(404)
+    }
+
+    @Test
     fun `cheat 목록은 macro read 가 없으면 403 insufficient_scope 다`() {
         val world = newWorld()
         val writeOnly = mint(world.userId, scope = "macro:write")
