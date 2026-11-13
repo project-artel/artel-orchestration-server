@@ -63,6 +63,8 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects", McpScope.MACRO_READ),
     McpRoute(HttpMethod.POST, "/api/projects", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds", McpScope.MACRO_READ),
+    // 게임을 실행하기 전에 MCP 의 `init` 이 버전으로 빌드를 만든다(ARTEL-1447). macro·fact·rule 이 그 빌드에 붙는다.
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/game-builds", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds/{buildId}/game-functions", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/macros/grammar", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/developer-macros", McpScope.MACRO_READ),

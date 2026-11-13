@@ -110,7 +110,42 @@ class GameBuildIntegrationTest {
         assertThat(error.statusCode.value()).isEqualTo(HttpStatus.NOT_FOUND.value())
     }
 
-    /** 빌드는 사람이 만들 수 없으므로, SDK 등록을 한 번 거쳐 실제 경로로 만든다. */
+    @Test
+    fun `declares a build by version before the game runs, and the game later joins that build`(): Unit = runBlocking {
+        val token = signIn("42", "octocat")
+        val projectId = post(token, "/api/projects", """{"name":"선언 테스트","genre":"ACTION"}""")["id"].asText()
+
+        val first = exchange(token, "/api/projects/$projectId/game-builds", """{"version":" 1.5.0 "}""")
+        assertThat(first.first).isEqualTo(HttpStatus.CREATED.value())
+        assertThat(first.second["version"].asText()).isEqualTo("1.5.0")
+        assertThat(first.second["isEditor"].asBoolean()).isFalse()
+        val buildId = first.second["id"].asText()
+
+        val again = exchange(token, "/api/projects/$projectId/game-builds", """{"version":"1.5.0"}""")
+        assertThat(again.first).isEqualTo(HttpStatus.OK.value())
+        assertThat(again.second["id"].asText()).isEqualTo(buildId)
+
+        registerSdk(projectId, "1.5.0")
+
+        val builds = get(token, "/api/projects/$projectId/game-builds")["items"]
+        assertThat(builds.size()).isEqualTo(1)
+        assertThat(builds[0]["id"].asText()).isEqualTo(buildId)
+    }
+
+    @Test
+    fun `refuses a blank version and hides the project from someone who is not a member`(): Unit = runBlocking {
+        val token = signIn("42", "octocat")
+        val projectId = post(token, "/api/projects", """{"name":"선언 테스트","genre":"ACTION"}""")["id"].asText()
+
+        val blank = errorOf { post(token, "/api/projects/$projectId/game-builds", """{"version":"  "}""") }
+        assertThat(blank.statusCode.value()).isEqualTo(HttpStatus.BAD_REQUEST.value())
+
+        val strangerToken = signIn("77", "stranger")
+        val hidden = errorOf { post(strangerToken, "/api/projects/$projectId/game-builds", """{"version":"1.5.0"}""") }
+        assertThat(hidden.statusCode.value()).isEqualTo(HttpStatus.NOT_FOUND.value())
+    }
+
+    /** SDK 등록을 한 번 거쳐 실제 경로로 빌드를 만든다. */
     private suspend fun createProjectWithBuild(
         token: String,
         version: String,
@@ -118,19 +153,33 @@ class GameBuildIntegrationTest {
         login: String = "octocat"
     ): String {
         val projectId = post(token, "/api/projects", """{"name":"게임 빌드 테스트","genre":"ACTION"}""")["id"].asText()
-        val sdkToken = sdkTokenFor(providerUserId, login)
+        registerSdk(projectId, version, providerUserId, login)
+        return projectId
+    }
 
+    /** 그 버전의 development build 로 SDK 등록을 한 번 한다. */
+    private suspend fun registerSdk(projectId: String, version: String, providerUserId: String = "42", login: String = "octocat") {
         client().post()
             .uri("/api/sdk/registrations")
-            .header(HttpHeaders.AUTHORIZATION, "Bearer $sdkToken")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer ${sdkTokenFor(providerUserId, login)}")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue("""{"projectId":"$projectId","sdkUuid":"sdk-uuid-1","gameVersion":"$version"}""")
             .retrieve()
             .bodyToMono(String::class.java)
             .block()
-
-        return projectId
     }
+
+    /** 상태 코드와 본문을 함께 돌려준다. 201 과 200 을 가려야 하는 요청에 쓴다. */
+    private fun exchange(token: String, uri: String, body: String): Pair<Int, com.fasterxml.jackson.databind.JsonNode> =
+        client().post()
+            .uri(uri)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchangeToMono { response ->
+                response.bodyToMono(String::class.java).map { response.statusCode().value() to objectMapper.readTree(it) }
+            }
+            .block()!!
 
     /** 브라우저 세션과 같은 사용자로 SDK 토큰을 만든다. upsert라 사용자가 새로 생기지 않는다. */
     private suspend fun sdkTokenFor(providerUserId: String, login: String): String =
