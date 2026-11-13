@@ -47,10 +47,13 @@ import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testcase.service.CaseScope
+import kr.artel.orchestration.testcase.service.CaseReviewService
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
+import kr.artel.orchestration.testscenario.service.ScenarioReviewService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.userllmkey.entity.KeySource
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -616,6 +619,9 @@ class QaTryService(
     private val testCaseReader: TestCaseReader,
     private val testRuns: TestRunRepository,
     private val testRunService: TestRunService,
+    private val caseReviews: CaseReviewService,
+    private val scenarioReviews: ScenarioReviewService,
+    private val transactionalOperator: TransactionalOperator,
     private val instanceRepository: GameInstanceRepository,
     private val projectRepository: ProjectRepository,
     private val sessionManager: SessionManager,
@@ -771,10 +777,11 @@ class QaTryService(
         val runScenarios = scenarioIds.map { scenarioId ->
             val scenario = scenarioAccessService.accessibleScenario(scenarioId, userId) ?: throw NotFoundException()
             if (scenario.projectId != instance.projectId) throw NotFoundException()
-            scenario.toDraft(objectMapper) to scenario.reviewStatus
+            scenario to scenario.toDraft(objectMapper)
         }
-        assertNoPendingReview(runScenarios)
-        val preparedScenarios = runScenarios.map { (draft, _) ->
+        val pending = pendingReview(instance.projectId, runScenarios)
+        if (!pending.isEmpty()) throw TestRunReviewPendingException(pending)
+        val preparedScenarios = runScenarios.map { (_, draft) ->
             compositionService.agentScenario(draft, caseScope, recordedBuildId)
         }
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
@@ -866,12 +873,55 @@ class QaTryService(
         }
     }
 
-    /** 런의 시나리오와 그 시나리오가 쓰는 Test Case 가 모두 승인됐는지 본다. 이어받기로 남의 런을 끊기 전에 부른다. */
-    private suspend fun assertNoPendingReview(runScenarios: List<Pair<ScenarioDraft, String>>) {
-        val pendingScenarios = runScenarios.count { (_, reviewStatus) -> reviewStatus != "READY" }
-        val caseIds = runScenarios.flatMap { (draft, _) -> draft.steps.mapNotNull { it.caseId } }.toSet()
-        val pendingCases = testCaseReader.byIds(caseIds, CaseScope.Latest).values.count { it.reviewStatus != "READY" }
-        if (pendingScenarios > 0 || pendingCases > 0) throw TestRunReviewPendingException(pendingScenarios, pendingCases)
+    private suspend fun pendingReview(projectId: Long, runScenarios: List<Pair<TestScenarioEntity, ScenarioDraft>>): QaPendingReview {
+        val pendingScenarios = runScenarios.filter { (scenario, _) -> scenario.reviewStatus != "READY" }
+            .map { (scenario, draft) ->
+                QaPendingReviewItem(requireNotNull(scenario.id).toString(), draft.title, requireNotNull(scenario.updatedAt))
+            }
+        val caseIds = runScenarios.flatMap { (_, draft) -> draft.steps.mapNotNull { it.caseId } }.toSet()
+        val pendingCases = testCaseReader.byIds(caseIds, CaseScope.Latest).values
+            .filter { it.projectId == projectId && it.reviewStatus != "READY" }
+            .sortedBy { it.id }
+            .map { QaPendingReviewItem(requireNotNull(it.id).toString(), it.step, requireNotNull(it.updatedAt)) }
+        return QaPendingReview(pendingScenarios, pendingCases)
+    }
+
+    suspend fun approvePendingRunReview(testRunId: Long, userId: Long, confirmation: QaReviewConfirmation) {
+        val projectId = testRuns.findById(testRunId)?.projectId ?: throw NotFoundException()
+        suspend fun currentReview(): QaPendingReview {
+            val links = testRunService.getScenarios(testRunId, userId) ?: throw NotFoundException()
+            return pendingReview(projectId, links.items.map { link ->
+                val scenario = scenarioAccessService.accessibleScenario(link.testScenarioId.toLong(), userId)
+                    ?.takeIf { it.projectId == projectId } ?: throw NotFoundException()
+                scenario to scenario.toDraft(objectMapper)
+            })
+        }
+        try {
+            transactionalOperator.executeAndAwait {
+                val pending = currentReview()
+                fun List<QaPendingReviewItem>.versions() = map { QaReviewVersion(it.id, it.updatedAt) }.toSet()
+                if (pending.scenarios.versions() != confirmation.scenarios.toSet() ||
+                    pending.cases.versions() != confirmation.cases.toSet()
+                ) {
+                    if (!pending.isEmpty()) throw TestRunReviewPendingException(pending)
+                    return@executeAndAwait
+                }
+                for (item in pending.cases) {
+                    caseReviews.approveDraft(projectId, item.id.toLong(), userId, item.updatedAt)
+                }
+                val approvedScenarios = pending.scenarios.sortedBy { it.id }.map { item ->
+                    scenarioReviews.approveDraft(projectId, item.id.toLong(), userId, item.updatedAt)
+                }
+                for (scenario in approvedScenarios) scenarioReviews.finishApproval(scenario)
+                for (item in pending.cases) {
+                    caseReviews.finishApproval(projectId, item.id.toLong(), userId)
+                }
+            }
+        } catch (error: ConflictException) {
+            if (error.code != CaseReviewService.REVIEW_STALE && error.code != CaseReviewService.REVIEW_SETTLED) throw error
+            val pending = currentReview()
+            if (!pending.isEmpty()) throw TestRunReviewPendingException(pending)
+        }
     }
 
     /**

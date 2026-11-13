@@ -1477,11 +1477,19 @@ class TestScenarioReconcileIntegrationTest {
         val refusal = objectMapper.readTree(started.second)
         assertThat(refusal["code"].asText()).isEqualTo("test_run_review_pending")
         assertThat(refusal["message"].asText()).contains("시나리오 1건")
+        val pending = refusal["pendingReview"]["scenarios"].single()
+        assertThat(pending["id"].asText()).isEqualTo(draft.id.toString())
+        assertThat(pending["label"].asText()).isEqualTo("지도 여정")
+        assertThat(pending["updatedAt"].isTextual).isTrue()
         assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()).containsExactly(case)
         val coverage = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-runs/$runId/coverage", token).second)
         assertThat(coverage["covered"].asInt()).isEqualTo(0)
 
-        send(client, "POST", "/api/test-scenario/${draft.id}/approve", token)
+        val approvedReview = send(
+            client, "POST", "/api/qa-runs/pending-review/$runId", token,
+            """{"scenarios":[{"id":"${draft.id}","updatedAt":${pending["updatedAt"]}}],"cases":[]}""",
+        )
+        assertThat(approvedReview.first).isEqualTo(204)
 
         assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()).isEmpty()
         val approved = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-runs/$runId/coverage", token).second)

@@ -1,6 +1,8 @@
 package kr.artel.orchestration.config
 
 import kr.artel.orchestration.common.error.ApiException
+import kr.artel.orchestration.qa.service.QaPendingReview
+import kr.artel.orchestration.qa.service.TestRunReviewPendingException
 import kr.artel.orchestration.telemetry.service.TelemetryErrorRecorder
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -79,7 +81,8 @@ class ApiExceptionHandler(
                     code = error.code,
                     message = clientMessage,
                     // 5xx 는 message 와 같은 이유로 fields 도 내보내지 않는다.
-                    fields = if (serverError) emptyMap() else error.responseFields
+                    fields = if (serverError) emptyMap() else error.responseFields,
+                    pendingReview = (error as? TestRunReviewPendingException)?.pending,
                 )
             )
     }
@@ -150,5 +153,7 @@ private const val INTERNAL_ERROR_CODE = "internal_error"
 data class ApiErrorResponse(
     val code: String,
     val message: String,
-    val fields: Map<String, String> = emptyMap()
+    val fields: Map<String, String> = emptyMap(),
+    @get:com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    val pendingReview: QaPendingReview? = null,
 )
