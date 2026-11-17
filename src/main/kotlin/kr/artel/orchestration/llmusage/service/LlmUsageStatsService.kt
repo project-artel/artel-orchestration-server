@@ -187,9 +187,11 @@ private fun LlmUsageStatsRow?.toTotals(): LlmUsageTotals =
         inputTokens = this?.inputTokens ?: 0,
         outputTokens = this?.outputTokens ?: 0,
         cachedInputTokens = this?.cachedInputTokens ?: 0,
+        cacheWriteTokens = this?.cacheWriteTokens ?: 0,
         reasoningTokens = this?.reasoningTokens ?: 0,
         // 0으로 떨어뜨리지 않는다. "단가 미상"이 "공짜"로 읽히면 비용 비교가 조용히 틀린다.
         costUsd = this?.costUsd,
+        costEstimated = this?.costEstimated ?: false,
         calls = this?.calls ?: 0,
         pricedCalls = this?.pricedCalls ?: 0
     )
@@ -208,8 +210,10 @@ private fun QaRunUsageRow.toResponse() = QaRunUsageResponse(
         inputTokens = inputTokens,
         outputTokens = outputTokens,
         cachedInputTokens = cachedInputTokens,
+        cacheWriteTokens = cacheWriteTokens,
         reasoningTokens = reasoningTokens,
         costUsd = costUsd,
+        costEstimated = costEstimated,
         calls = calls,
         pricedCalls = pricedCalls
     )
