@@ -230,8 +230,8 @@ class QaRunInboundActivationIntegrationTest {
 
         val cancelled = qaRunRepository.findById(run.runId)!!
         assertThat(cancelled.status).isEqualTo("CANCELLED")
-        // 아직 안 돈 PENDING 시나리오는 미종단 정리로 FAILED가 된다.
-        assertThat(qaTryRepository.findById(run.pendingTryId)!!.status).isEqualTo("FAILED")
+        // 아직 안 돈 PENDING 시나리오는 미종단 정리로 CANCELLED가 된다 — 취소 때문에 돌지 못한 것이지 실패가 아니다.
+        assertThat(qaTryRepository.findById(run.pendingTryId)!!.status).isEqualTo("CANCELLED")
         assertThat(qaRunRepository.findActiveByGameInstanceId(run.instanceId)).isNull()
     }
 
