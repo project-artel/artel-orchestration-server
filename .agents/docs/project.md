@@ -52,6 +52,12 @@ Fill this document during project initialization. Agents must verify commands ag
 
 ## Commands
 
+When changing QA pulse subscriptions, verify that a settled game sends a whole
+snapshot for each new consumer. A successful `start_readings` response alone
+does not prove that a new QA received state: a previously resumed subscription
+can otherwise remain silent. Keep the legacy wire alias with `force:true` for
+old SDK compatibility; the SDK's canonical command is `subscribe_pulse`.
+
 | Purpose | Command |
 |---|---|
 | Install dependencies | TODO |
