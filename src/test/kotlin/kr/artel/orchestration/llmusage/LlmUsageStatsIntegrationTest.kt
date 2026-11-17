@@ -341,6 +341,21 @@ class LlmUsageStatsIntegrationTest {
     }
 
     @Test
+    fun `재생 시점까지 호출된 모델 사용량을 합산한다`(): Unit = runBlocking {
+        val qaTryId = seedRun()
+        val cutoff = now.minusSeconds(60)
+        seedUsage("QA_RUN", qaTryId, input = 100, output = 10, cost = "0.001000", calledAt = cutoff, createdAt = now)
+        seedUsage("QA_RUN", qaTryId, input = 900, output = 90, cost = "0.009000", calledAt = cutoff.plusSeconds(1))
+
+        assertThat(statsService.qaRun(ownerId, qaTryId, cutoff.minusSeconds(1))!!.totals.calls).isZero()
+        val replay = statsService.qaRun(ownerId, qaTryId, cutoff)!!.totals
+        assertThat(replay.calls).isEqualTo(1)
+        assertThat(replay.inputTokens).isEqualTo(100)
+        assertThat(replay.costUsd).isEqualByComparingTo(BigDecimal("0.001000"))
+        assertThat(statsService.qaRun(ownerId, qaTryId)!!.totals.calls).isEqualTo(2)
+    }
+
+    @Test
     fun `a run with no reported call is listed with zero, not dropped`(): Unit = runBlocking {
         val silent = seedRun()
 

@@ -94,9 +94,10 @@ class LlmUsageStatsController(
     @GetMapping("/qa-runs/{qaTryId}")
     suspend fun qaRun(
         @PathVariable qaTryId: String,
+        @RequestParam(required = false) through: String?,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<QaRunUsageResponse> =
-        service.qaRun(appUserId, parseId(qaTryId))
+        service.qaRun(appUserId, parseId(qaTryId), parseInstant(through, "through"))
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
