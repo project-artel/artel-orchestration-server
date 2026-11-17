@@ -64,6 +64,13 @@ data class AppUserEntity(
     @Column("disabled")
     val disabled: Boolean = false,
 
+    /**
+     * 시작 튜토리얼을 마치거나 건너뛴 시각. null 이면 아직 보지 않은 사용자이고, 화면이 처음 들어올 때
+     * 튜토리얼을 자동으로 띄운다(ARTEL-1462). 이 칸이 생기기 전 가입자는 V186 이 채워 두었다.
+     */
+    @Column("tutorial_seen_at")
+    val tutorialSeenAt: Instant? = null,
+
     @Column("created_at")
     val createdAt: Instant,
 

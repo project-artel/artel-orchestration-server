@@ -50,7 +50,9 @@ data class UserProfile(
     val emailVerifiedAt: Instant?,
     val identities: List<LinkedIdentity>,
     /** ADMIN 이 막은 계정이면 true 다. */
-    val disabled: Boolean = false
+    val disabled: Boolean = false,
+    /** 시작 튜토리얼을 마치거나 건너뛴 시각. null 이면 아직 보지 않았다. */
+    val tutorialSeenAt: Instant? = null
 )
 
 data class LinkedIdentity(
