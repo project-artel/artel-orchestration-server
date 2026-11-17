@@ -133,6 +133,28 @@ class SecurityConfig {
         .build()
 
     /**
+     * 소개 사이트(artel.kr)의 Wishlist 가입 전용 체인. 세션 없이 부르는 공개 경로다.
+     *
+     * 기본 체인의 permitAll 에 두지 않는 이유는 [storageObjectSecurityWebFilterChain] 과 같다. 소개 사이트는
+     * `credentials: 'include'` 로 부를 수 있고, 그러면 이 서버의 세션 쿠키가 함께 실린다. 기본 체인은 permitAll 경로에서도
+     * 쿠키를 읽어 검증하므로, 만료됐거나 다른 secret 으로 서명된 쿠키를 가진 방문자가 401 을 받는다. 이 체인은 쿠키와
+     * bearer 를 아예 읽지 않는다. CORS 는 다른 체인과 같은 [corsConfigurationSource] 를 쓴다.
+     *
+     * 범위는 경로 하나다. 하위 경로 전체로 열면 아래에 경로가 더 생길 때 저절로 무인증이 된다.
+     */
+    @Bean
+    @Order(3)
+    fun wishlistSecurityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("/wishlist"))
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().permitAll() }
+        .build()
+
+    /**
      * GitHub App 설치 복귀 경로 전용 체인.
      *
      * 경로는 여전히 **인증 대상**이다(`project.md` 규칙 2 — 무인증 라우트를 `/api/` 아래 두지 않는다).
