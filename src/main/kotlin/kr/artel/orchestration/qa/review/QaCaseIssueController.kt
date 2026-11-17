@@ -2,11 +2,13 @@ package kr.artel.orchestration.qa.review
 
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.auth.web.CurrentUserId
-import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.error.BadRequestException
-import org.springframework.r2dbc.core.awaitSingle
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import org.springframework.r2dbc.core.DatabaseClient
+import org.springframework.r2dbc.core.awaitSingle
 import org.springframework.r2dbc.core.awaitSingleOrNull
 import org.springframework.r2dbc.core.flow
 import org.springframework.web.bind.annotation.*
@@ -24,7 +26,7 @@ data class CaseIssueHistory(val issueId: String, val testCaseId: String?, val pr
 @RestController
 @RequestMapping("/api/projects/{projectId}/qa-evaluation")
 class QaCaseIssueController(private val database: DatabaseClient, private val access: ProjectAccessService,
-    private val reviews: QaVerdictReviewService) {
+    private val reviews: QaVerdictReviewService, private val projectChanges: ProjectChangeStreamManager) {
 
     @PutMapping("/verdicts/{logId}/review")
     suspend fun review(@PathVariable projectId: Long, @PathVariable logId: Long, @CurrentUserId userId: Long,
@@ -43,6 +45,7 @@ class QaCaseIssueController(private val database: DatabaseClient, private val ac
             .let { query -> note?.let { query.bind("note", it) } ?: query.bindNull("note", String::class.java) }
             .map { row, _ -> row.get("reported", java.lang.Boolean::class.java)!!.booleanValue() }.awaitSingle()
         if (!reported) throw BadRequestException("실행 당시 Test Case와 현재 내용을 다시 확인해 주세요.")
+        projectChanges.notify(projectId, ProjectChangeTopic.TEST_CASES)
         return mapOf("reported" to true)
     }
 
@@ -52,7 +55,6 @@ class QaCaseIssueController(private val database: DatabaseClient, private val ac
             JOIN test_scenario s ON s.id = t.test_scenario_id WHERE l.id = :id AND s.project_id = :project""")
             .bind("id", logId).bind("project", projectId).map { row, _ -> row.get("id")!! }.awaitSingleOrNull()
             ?: throw NotFoundException()
-
     }
 
     @GetMapping("/issues/{issueId}")

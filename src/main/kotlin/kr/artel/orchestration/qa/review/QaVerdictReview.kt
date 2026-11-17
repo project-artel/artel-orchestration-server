@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa.review
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
 import org.springframework.data.annotation.Id
@@ -28,7 +29,7 @@ data class QaVerdictReviewEntity(
     @Column("decided_by") val decidedBy: Long?,
     @Column("decided_at") val decidedAt: Instant?,
     @Column("created_at") val createdAt: Instant,
-    @Column("revised_case_snapshot") val revisedCaseSnapshot: Json? = null,
+    @get:JsonIgnore @Column("revised_case_snapshot") val revisedCaseSnapshot: Json? = null,
 )
 
 /** TC 하나에 사람이 정한 판정 한 건(ARTEL-1256). 다음 QA 가 같은 TC 를 판정할 때 참고로 넘긴다. */

@@ -5,7 +5,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.springframework.r2dbc.core.awaitRowsUpdated
-import org.springframework.r2dbc.core.awaitSingle
+import kr.artel.orchestration.qa.review.CaseContentReportRequest
+import kr.artel.orchestration.qa.review.QaCaseIssueController
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -102,6 +103,7 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var reliability: QaReliabilityService
     @Autowired private lateinit var questions: QaOperatorQuestions
     @Autowired private lateinit var contentReviews: QaCaseContentReviews
+    @Autowired private lateinit var issueController: QaCaseIssueController
     @Autowired private lateinit var caseService: kr.artel.orchestration.testcase.service.TestCaseService
     @Autowired private lateinit var database: org.springframework.r2dbc.core.DatabaseClient
 
@@ -170,9 +172,7 @@ class CaseVerdictFromQaIntegrationTest {
         val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
         val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.FAILED, "게임 결과"))
         val logId = result.logId!!.toLong()
-        database.sql("SELECT report_qa_case_content(:log, '기대 결과 수정', :userId)")
-            .bind("log", logId).bind("userId", run.ownerId)
-            .map { row, _ -> row.get(0, java.lang.Boolean::class.java)!!.booleanValue() }.awaitSingle()
+        issueController.reportContentIssue(run.projectId, logId, run.ownerId, CaseContentReportRequest("기대 결과 수정"))
         assertThat(attempts.get(run.projectId, run.ownerId, attempt.id).review).isNull()
         reviewService.decideOutcome(run.qaRunId, logId, run.ownerId, "FAILED", null)
         assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVISION")
