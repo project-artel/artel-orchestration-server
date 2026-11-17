@@ -42,6 +42,9 @@ class LlmUsageStatsController(
      *   `called_at`이다.
      * @param zone 일별 버킷을 자를 IANA 시간대(`Asia/Seoul`). 생략하면 UTC — 이 값에 따라 월 경계의
      *   하루가 어느 달에 붙는지가 바뀐다.
+     * @param scope `member` 면 등급과 무관하게 호출한 사람이 멤버인 프로젝트만 센다. 계정 설정의 "API 관리" 처럼 내
+     *   사용량을 보여 주는 화면이 쓴다 — 생략하면 `DEVELOPER` · `ADMIN` 은 참여하지 않은 프로젝트까지 이름과 비용이
+     *   보였다. 생략하면 종전과 같다(볼 수 있는 전 프로젝트).
      */
     @GetMapping("/stats")
     suspend fun stats(
@@ -49,6 +52,7 @@ class LlmUsageStatsController(
         @RequestParam(required = false) from: String?,
         @RequestParam(required = false) to: String?,
         @RequestParam(required = false) zone: String?,
+        @RequestParam(required = false) scope: String?,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<LlmUsageStatsResponse> =
         ResponseEntity.ok(
@@ -57,7 +61,8 @@ class LlmUsageStatsController(
                 projectId = projectId?.let { parseId(it) },
                 from = parseInstant(from, "from"),
                 to = parseInstant(to, "to"),
-                zone = zone
+                zone = zone,
+                membersOnly = parseScope(scope)
             )
         )
 
@@ -113,5 +118,13 @@ class LlmUsageStatsController(
             } catch (_: DateTimeParseException) {
                 throw BadRequestException("$field must be an ISO-8601 instant")
             }
+        }
+
+    /** `member` 면 true. 생략하면 false. 그 밖의 값은 400 이다 — 오타가 조용히 넓은 범위로 읽히면 안 된다. */
+    private fun parseScope(value: String?): Boolean =
+        when (value?.takeIf { it.isNotBlank() }) {
+            null -> false
+            "member" -> true
+            else -> throw BadRequestException("scope must be 'member' or omitted")
         }
 }
