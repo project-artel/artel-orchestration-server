@@ -141,7 +141,7 @@ class LlmUsageStatsService(
      * `DEVELOPER` 등급은 [qaRuns]와 같이 통과한다. 목록에 낸 런을 단건으로 열면 없다고 답하는 것은
      * 같은 행을 두고 두 가지로 대답하는 것이라, 화면이 그 차이를 설명할 방법이 없다.
      */
-    suspend fun qaRun(userId: Long, qaTryId: Long): QaRunUsageResponse? =
+    suspend fun qaRun(userId: Long, qaTryId: Long, through: Instant? = null): QaRunUsageResponse? =
         statsRepository.listQaRunUsage(
             userId = userId,
             projectId = null,
@@ -149,7 +149,8 @@ class LlmUsageStatsService(
             seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = Instant.EPOCH,
             to = Instant.now(clock).plus(Duration.ofDays(1)),
-            limit = 1
+            limit = 1,
+            calledThrough = through
         ).firstOrNull()?.toResponse()
 
     /** 조회 창. [from] 생략은 [to]에서 [DEFAULT_WINDOW] 뒤로, [to] 생략은 지금이다. */
