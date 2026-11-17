@@ -45,8 +45,10 @@ data class LlmUsageTotals(
     val inputTokens: Long,
     val outputTokens: Long,
     val cachedInputTokens: Long,
+    val cacheWriteTokens: Long = 0,
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
+    val costEstimated: Boolean = false,
     val calls: Long,
     val pricedCalls: Long
 )
