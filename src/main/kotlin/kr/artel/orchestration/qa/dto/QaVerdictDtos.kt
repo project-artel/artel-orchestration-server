@@ -43,6 +43,9 @@ data class QaTryVerdicts(
     /** 추가 검토로 골랐다가 사람이 정한 판정 수. */
     val reviewedCount: Int = 0,
     val reportingUnit: String = "STEP",
+    /** 통과한 TC 수와 판정한 TC 수(`qa_try` 의 값 그대로). 화면이 시나리오를 `통과/전체` 로 보이는 재료다. 모르면 null. */
+    val casesPassed: Int? = null,
+    val casesTotal: Int? = null,
 )
 
 data class QaScenarioStepView(

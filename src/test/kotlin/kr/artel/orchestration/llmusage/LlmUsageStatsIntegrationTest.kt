@@ -218,6 +218,23 @@ class LlmUsageStatsIntegrationTest {
         assertThat(all.total.costUsd).isEqualByComparingTo(BigDecimal("0.010000"))
     }
 
+    /**
+     * 계정 화면의 "API 관리" 는 `member` 범위로 묻는다. 거기서는 개발자라도 참여하지 않은 프로젝트의 이름과 비용이
+     * 나오지 않는다 — 바로 위의 전 프로젝트 합산은 관리 화면의 몫이다.
+     */
+    @Test
+    fun `a developer's own usage view shows only projects they belong to`(): Unit = runBlocking {
+        seedUsage("KNOWLEDGE_QUERY", projectId, input = 100, output = 10, cost = "0.001000")
+        seedUsage("KNOWLEDGE_QUERY", otherProjectId, input = 900, output = 90, cost = "0.009000")
+        val developerId = promotedDeveloper()
+
+        val mine = statsService.stats(developerId, null, windowStart, windowEnd, "UTC", membersOnly = true)
+
+        assertThat(mine.total.inputTokens).isEqualTo(0)
+        assertThat(mine.byProject).isEmpty()
+        assertThat(mine.unattributedCalls).isEqualTo(0)
+    }
+
     @Test
     fun `a call whose target is gone is counted apart, never as free`(): Unit = runBlocking {
         seedUsage("KNOWLEDGE_QUERY", projectId, input = 100, output = 10, cost = "0.001000")
@@ -321,6 +338,21 @@ class LlmUsageStatsIntegrationTest {
         assertThat(runs.getValue(pricey.toString()).totals.calls).isEqualTo(2)
         assertThat(runs.getValue(pricey.toString()).totals.costUsd)
             .isEqualByComparingTo(BigDecimal("0.010000"))
+    }
+
+    @Test
+    fun `재생 시점까지 호출된 모델 사용량을 합산한다`(): Unit = runBlocking {
+        val qaTryId = seedRun()
+        val cutoff = now.minusSeconds(60)
+        seedUsage("QA_RUN", qaTryId, input = 100, output = 10, cost = "0.001000", calledAt = cutoff, createdAt = now)
+        seedUsage("QA_RUN", qaTryId, input = 900, output = 90, cost = "0.009000", calledAt = cutoff.plusSeconds(1))
+
+        assertThat(statsService.qaRun(ownerId, qaTryId, cutoff.minusSeconds(1))!!.totals.calls).isZero()
+        val replay = statsService.qaRun(ownerId, qaTryId, cutoff)!!.totals
+        assertThat(replay.calls).isEqualTo(1)
+        assertThat(replay.inputTokens).isEqualTo(100)
+        assertThat(replay.costUsd).isEqualByComparingTo(BigDecimal("0.001000"))
+        assertThat(statsService.qaRun(ownerId, qaTryId)!!.totals.calls).isEqualTo(2)
     }
 
     @Test

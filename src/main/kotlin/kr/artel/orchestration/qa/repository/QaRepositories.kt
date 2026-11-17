@@ -359,6 +359,21 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     )
     suspend fun failByQaRunId(qaRunId: Long, completedAt: Instant): Int
 
+    /**
+     * 사용자가 런을 취소했을 때 그 런의 미종단 qa_try(PENDING/STARTING/RUNNING)를 모두 CANCELLED로 정리한다.
+     * [failByQaRunId]와 따로인 것은 취소 때문에 차례가 오지 못한 시나리오가 실패가 아니기 때문이다 — FAILED로
+     * 두면 화면에 돌지도 않은 시나리오가 빨간 "실패" 로 보이고, 런 통계의 실패 수에도 들어간다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'CANCELLED', completed_at = :completedAt, updated_at = :completedAt
+        WHERE qa_run_id = :qaRunId AND status IN ('PENDING', 'STARTING', 'RUNNING')
+        """
+    )
+    suspend fun cancelByQaRunId(qaRunId: Long, completedAt: Instant): Int
+
     @Modifying
     @Query(
         """

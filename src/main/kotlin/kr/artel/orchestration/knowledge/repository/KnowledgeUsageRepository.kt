@@ -89,7 +89,7 @@ interface KnowledgeUsageRepository : CoroutineCrudRepository<KnowledgeUsageEntit
     /**
      * [finalizeUncitedByQaTryId]와 같되 런(qa_run) 전체를 한 문장으로 확정한다.
      *
-     * 런 시작 실패와 런 취소는 시나리오 try를 **한꺼번에** 종단으로 보낸다(`failByQaRunId`).
+     * 런 시작 실패와 런 취소는 시나리오 try를 **한꺼번에** 종단으로 보낸다(`failByQaRunId` · `cancelByQaRunId`).
      * 그 경로에서 try id를 다시 읽어 하나씩 도는 것은 같은 일을 두 번 하는 것이고, 그 사이
      * 새로 종단된 try를 놓칠 수 있다. 종단이 아닌 try는 위와 같은 술어로 자동으로 빠진다.
      */

@@ -1122,8 +1122,9 @@ class QaTryService(
             }
         }
         val now = Instant.now(clock)
-        // 아직 안 돈 미종단(PENDING 등) try를 정리하고, 런을 CANCELLED로 닫는다.
-        tryRepository.failByQaRunId(qaRunId, now)
+        // 아직 안 돈 미종단(PENDING 등) try를 CANCELLED로 정리하고, 런을 CANCELLED로 닫는다. 취소 때문에 차례가
+        // 오지 못한 시나리오는 실패가 아니다 — FAILED로 두면 돌지도 않은 시나리오가 "실패" 로 보인다.
+        tryRepository.cancelByQaRunId(qaRunId, now)
         runRepository.transition(qaRunId, "STARTING", "CANCELLED", now, now)
         runRepository.transition(qaRunId, "RUNNING", "CANCELLED", now, now)
         // 세션은 **활성 try가 있든 없든** 끊는다. 위 `failureService.cancelled`는 활성 try의
@@ -1219,6 +1220,8 @@ class QaTryService(
         effectiveBehaviors = functions.effectiveBehaviors,
         qaRunId = qaRunId?.toString(),
         stop = stopCode?.let { QaStopResponse(it, stopProvider, stopMessage) },
-        inputMode = inputModeOf(runConfig.asString(), objectMapper).wire
+        inputMode = inputModeOf(runConfig.asString(), objectMapper).wire,
+        casesPassed = casesPassed,
+        casesTotal = casesTotal
     )
 }

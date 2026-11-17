@@ -226,12 +226,14 @@ class LlmUsageStatsRepository(
         seesAllProjects: Boolean,
         from: Instant,
         to: Instant,
-        limit: Int
+        limit: Int,
+        calledThrough: Instant? = null
     ): List<QaRunUsageRow> {
         val filters = buildString {
             if (projectId != null) append("\n               AND ts.project_id = :projectId")
             if (qaTryId != null) append("\n               AND qt.id = :qaTryId")
         }
+        val usageCutoff = if (calledThrough == null) "" else " AND u.called_at <= :calledThrough"
         val sql = """
             SELECT qt.id                                       AS qa_try_id,
                    ts.project_id                               AS project_id,
@@ -254,7 +256,7 @@ class LlmUsageStatsRepository(
               FROM qa_try qt
               JOIN test_scenario ts ON ts.id = qt.test_scenario_id
               LEFT JOIN llm_usage u
-                     ON u.service = 'QA_RUN' AND u.reference_id = qt.id
+                     ON u.service = 'QA_RUN' AND u.reference_id = qt.id$usageCutoff
              WHERE qt.started_at >= :from
                AND qt.started_at < :to
                -- DEVELOPER 등급은 이 조건을 통과한다(PlatformAccessService).
@@ -275,6 +277,7 @@ class LlmUsageStatsRepository(
             .bind("limit", limit)
         if (projectId != null) spec = spec.bind("projectId", projectId)
         if (qaTryId != null) spec = spec.bind("qaTryId", qaTryId)
+        if (calledThrough != null) spec = spec.bind("calledThrough", calledThrough)
 
         return spec.map { row: Readable -> row.toQaRunUsageRow() }.flow().toList()
     }

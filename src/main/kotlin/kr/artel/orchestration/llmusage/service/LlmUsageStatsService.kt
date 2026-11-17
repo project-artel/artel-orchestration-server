@@ -57,7 +57,8 @@ class LlmUsageStatsService(
         projectId: Long?,
         from: Instant?,
         to: Instant?,
-        zone: String?
+        zone: String?,
+        membersOnly: Boolean = false
     ): LlmUsageStatsResponse {
         val window = window(from, to)
         val zoneId = parseZone(zone)
@@ -65,7 +66,8 @@ class LlmUsageStatsService(
         val rows = statsRepository.aggregate(
             userId = userId,
             projectId = projectId,
-            seesAllProjects = platformAccessService.seesAllProjects(userId),
+            // `membersOnly` 는 계정 화면처럼 "내" 사용량을 보이는 자리가 쓴다. 등급이 여는 전 프로젝트는 관리 화면의 몫이다.
+            seesAllProjects = !membersOnly && platformAccessService.seesAllProjects(userId),
             from = window.first,
             to = window.second,
             zone = zoneId.id
@@ -99,7 +101,8 @@ class LlmUsageStatsService(
                 },
             daily = rows.filter { it.groupingMask == LlmUsageGroupingSet.DAY }
                 .mapNotNull { row -> row.calledOn?.let { LlmUsageDailyCell(it, row.toTotals()) } },
-            unattributedCalls = statsRepository.countUnattributedCalls(window.first, window.second)
+            // 프로젝트에 붙지 않은 호출은 배포 전체의 개수라, 내 프로젝트만 보는 범위에는 싣지 않는다.
+            unattributedCalls = if (membersOnly) 0L else statsRepository.countUnattributedCalls(window.first, window.second)
         )
     }
 
@@ -141,7 +144,7 @@ class LlmUsageStatsService(
      * `DEVELOPER` 등급은 [qaRuns]와 같이 통과한다. 목록에 낸 런을 단건으로 열면 없다고 답하는 것은
      * 같은 행을 두고 두 가지로 대답하는 것이라, 화면이 그 차이를 설명할 방법이 없다.
      */
-    suspend fun qaRun(userId: Long, qaTryId: Long): QaRunUsageResponse? =
+    suspend fun qaRun(userId: Long, qaTryId: Long, through: Instant? = null): QaRunUsageResponse? =
         statsRepository.listQaRunUsage(
             userId = userId,
             projectId = null,
@@ -149,7 +152,8 @@ class LlmUsageStatsService(
             seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = Instant.EPOCH,
             to = Instant.now(clock).plus(Duration.ofDays(1)),
-            limit = 1
+            limit = 1,
+            calledThrough = through
         ).firstOrNull()?.toResponse()
 
     /** 조회 창. [from] 생략은 [to]에서 [DEFAULT_WINDOW] 뒤로, [to] 생략은 지금이다. */
