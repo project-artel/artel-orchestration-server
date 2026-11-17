@@ -6,7 +6,6 @@ import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
 
 /** 세기 시작한 시각과 그 뒤의 요청 수. 창이 끝나면 새로 센다. */
 private data class RequestWindow(val startedAt: Instant, val requests: Int)
@@ -25,25 +24,36 @@ class WishlistSignupLimiter(
     private val properties: WishlistProperties,
     private val clock: Clock
 ) {
-    private val windows = ConcurrentHashMap<String, RequestWindow>()
+    private val windows = mutableMapOf<String, RequestWindow>()
+    private var nextCleanupAt = Instant.MIN
 
     /** 요청 하나를 센다. 한도를 넘으면 429 다. */
+    @Synchronized
     fun acquire(clientAddress: String) {
         val now = Instant.now(clock)
-        if (windows.size >= properties.maxTrackedAddresses) evictExpired(now)
-        val window = windows.compute(clientAddress) { _, current ->
-            if (current == null || !isLive(current, now)) RequestWindow(now, 1) else current.copy(requests = current.requests + 1)
-        }!!
-        if (window.requests > properties.requestsPerWindow) {
-            val remaining = Duration.between(now, window.startedAt.plus(properties.window))
-            throw WishlistRateLimitedException(maxOf(1, remaining.seconds + if (remaining.nano > 0) 1 else 0))
+        val current = windows[clientAddress]
+        if (current != null && now.isBefore(expiresAt(current))) {
+            if (current.requests >= properties.requestsPerWindow) rejectUntil(expiresAt(current), now)
+            windows[clientAddress] = current.copy(requests = current.requests + 1)
+            return
         }
+        if (current == null && windows.size >= properties.maxTrackedAddresses) {
+            if (!now.isBefore(nextCleanupAt)) {
+                windows.values.removeIf { !now.isBefore(expiresAt(it)) }
+                nextCleanupAt = windows.values.minOfOrNull(::expiresAt) ?: Instant.MIN
+            }
+            if (windows.size >= properties.maxTrackedAddresses) rejectUntil(nextCleanupAt, now)
+        }
+        val window = RequestWindow(now, 1)
+        windows[clientAddress] = window
+        if (expiresAt(window).isBefore(nextCleanupAt)) nextCleanupAt = expiresAt(window)
     }
 
-    private fun isLive(window: RequestWindow, now: Instant) = now.isBefore(window.startedAt.plus(properties.window))
+    private fun expiresAt(window: RequestWindow): Instant = window.startedAt.plus(properties.window)
 
-    private fun evictExpired(now: Instant) {
-        windows.entries.removeIf { !isLive(it.value, now) }
+    private fun rejectUntil(retryAt: Instant, now: Instant): Nothing {
+        val remaining = Duration.between(now, retryAt)
+        throw WishlistRateLimitedException(maxOf(1, remaining.seconds + if (remaining.nano > 0) 1 else 0))
     }
 }
 
