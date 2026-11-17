@@ -43,6 +43,8 @@ data class CaseAttemptResponse(
     val qaRunId: String? = null,
     val caseSnapshot: JsonNode? = null,
     val originalReason: String? = null,
+    val reviewedAgainstRevision: Boolean = false,
+    val hasContentIssue: Boolean = false,
 )
 
 @Service
@@ -162,7 +164,7 @@ class QaCaseAttemptService(
     }
 
     companion object {
-        private const val SELECT = "SELECT a.*, r.decision, r.note, t.qa_run_id, l.payload->>'message' AS original_reason FROM qa_case_attempt a JOIN qa_try t ON t.id = a.qa_try_id LEFT JOIN qa_verdict_review r ON r.qa_log_id = a.qa_log_id LEFT JOIN qa_log l ON l.id = a.qa_log_id"
+        private const val SELECT = "SELECT a.*, r.decision, r.note, (r.revised_case_snapshot IS NOT NULL) AS reviewed_against_revision, EXISTS (SELECT 1 FROM qa_case_content_review cr WHERE cr.source_attempt_id = a.id AND cr.test_case_id = a.test_case_id) AS has_content_issue, t.qa_run_id, l.payload->>'message' AS original_reason FROM qa_case_attempt a JOIN qa_try t ON t.id = a.qa_try_id LEFT JOIN qa_verdict_review r ON r.qa_log_id = a.qa_log_id LEFT JOIN qa_log l ON l.id = a.qa_log_id"
     }
     private fun response(row: Row) = CaseAttemptResponse(
             row.get("id", UUID::class.java)!!, row.get("qa_try_id")!!.toString(), row.get("test_case_id")!!.toString(),
@@ -170,7 +172,9 @@ class QaCaseAttemptService(
             row.get("qa_log_id")?.toString(), row.get("decision", String::class.java), row.get("note", String::class.java),
             row.get("created_at", Instant::class.java)!!, qaRunId = row.get("qa_run_id")?.toString(),
             caseSnapshot = mapper.readTree(row.get("case_snapshot", io.r2dbc.postgresql.codec.Json::class.java)!!.asString()),
-            originalReason = row.get("original_reason", String::class.java))
+            originalReason = row.get("original_reason", String::class.java),
+            reviewedAgainstRevision = row.get("reviewed_against_revision", java.lang.Boolean::class.java)!!.booleanValue(),
+            hasContentIssue = row.get("has_content_issue", java.lang.Boolean::class.java)!!.booleanValue())
 }
 
 @RestController

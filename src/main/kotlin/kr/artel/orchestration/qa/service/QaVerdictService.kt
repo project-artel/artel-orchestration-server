@@ -182,7 +182,7 @@ class QaVerdictService(
     /** 사람이 정한 판정을 얹는다. 정했으면 추가 검토가 끝난 것이다. */
     private fun QaStepVerdict.withDecision(decision: QaVerdictReviewEntity?, names: Map<Long, String?>): QaStepVerdict {
         if (decision?.decision == null) return this
-        if (decision.decision !in setOf(QaVerdictReviewService.PASSED, QaVerdictReviewService.FAILED)) {
+        if (decision.revisedCaseSnapshot != null || decision.decision !in setOf(QaVerdictReviewService.PASSED, QaVerdictReviewService.FAILED)) {
             return copy(needsReview = false, humanDecision = null)
         }
         return copy(
@@ -199,7 +199,7 @@ class QaVerdictService(
 
     /** 방금 정한 판정을 화면에 돌려줄 모양으로. */
     suspend fun decisionOf(decision: QaVerdictReviewEntity): QaHumanDecision? {
-        if (decision.decision !in setOf(QaVerdictReviewService.PASSED, QaVerdictReviewService.FAILED)) return null
+        if (decision.revisedCaseSnapshot != null || decision.decision !in setOf(QaVerdictReviewService.PASSED, QaVerdictReviewService.FAILED)) return null
         return QaHumanDecision(
             passed = decision.decision == QaVerdictReviewService.PASSED,
             note = decision.note,

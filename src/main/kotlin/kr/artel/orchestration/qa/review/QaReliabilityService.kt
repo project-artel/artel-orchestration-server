@@ -1,5 +1,7 @@
 package kr.artel.orchestration.qa.review
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.BadRequestException
@@ -33,6 +35,7 @@ data class QaReviewRevision(
     val note: String?,
     val decidedBy: String?,
     val decidedAt: Instant,
+    val revisedCase: JsonNode?,
 )
 
 @Service
@@ -40,6 +43,7 @@ class QaReliabilityService(
     private val database: DatabaseClient,
     private val access: ProjectAccessService,
     private val clock: Clock,
+    private val objectMapper: ObjectMapper,
 ) {
     suspend fun report(projectId: Long, userId: Long, from: Instant?, to: Instant?): QaReliabilityResponse {
         requireMember(projectId, userId)
@@ -72,10 +76,11 @@ class QaReliabilityService(
         """).bind("id", logId).bind("project", projectId).map { row, _ -> row.get("id")!! }.flow().toList()
         if (visible.isEmpty()) throw NotFoundException()
         return database.sql("""
-            SELECT * FROM qa_verdict_review_revision WHERE qa_log_id = :id AND id < :before ORDER BY id DESC LIMIT 100
+            SELECT *, revised_case_snapshot::text AS revised_case FROM qa_verdict_review_revision WHERE qa_log_id = :id AND id < :before ORDER BY id DESC LIMIT 100
         """).bind("id", logId).bind("before", before ?: Long.MAX_VALUE).map { row, _ ->
             QaReviewRevision(row.get("id")!!.toString(), row.get("decision", String::class.java)!!,
-                row.get("note", String::class.java), row.get("decided_by")?.toString(), row.get("decided_at", Instant::class.java)!!)
+                row.get("note", String::class.java), row.get("decided_by")?.toString(), row.get("decided_at", Instant::class.java)!!,
+                row.get("revised_case", String::class.java)?.let { objectMapper.readTree(it) })
         }.flow().toList()
     }
 
@@ -90,7 +95,7 @@ class QaReliabilityService(
                 SELECT l.id, COALESCE(a.test_case_id::text, l.payload->>'case_id') AS case_id,
                        COALESCE(a.started_at, l.created_at) AS observed_at,
                        COALESCE(a.verdict, CASE l.payload->>'status' WHEN 'COMPLETED' THEN 'PASSED' WHEN 'FAILED' THEN 'FAILED' END) AS verdict,
-                       r.decision
+                       CASE WHEN r.revised_case_snapshot IS NULL THEN r.decision END AS decision
                 FROM qa_log l JOIN qa_try t ON t.id = l.qa_try_id
                 JOIN test_scenario s ON s.id = t.test_scenario_id
                 LEFT JOIN qa_case_attempt a ON a.qa_log_id = l.id

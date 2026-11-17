@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.springframework.r2dbc.core.awaitRowsUpdated
+import kr.artel.orchestration.qa.review.CaseContentReportRequest
+import kr.artel.orchestration.qa.review.QaCaseIssueController
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -101,6 +103,7 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var reliability: QaReliabilityService
     @Autowired private lateinit var questions: QaOperatorQuestions
     @Autowired private lateinit var contentReviews: QaCaseContentReviews
+    @Autowired private lateinit var issueController: QaCaseIssueController
     @Autowired private lateinit var caseService: kr.artel.orchestration.testcase.service.TestCaseService
     @Autowired private lateinit var database: org.springframework.r2dbc.core.DatabaseClient
 
@@ -161,6 +164,31 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(done.resolvedAt).isNotNull()
         assertThat(done.note).isEqualTo(reported.note)
         assertThat(done.attemptId).isEqualTo(reported.attemptId)
+    }
+
+    @Test
+    fun `내용 문제와 수정한 TC 기준의 사람 판정을 함께 저장한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.FAILED, "게임 결과"))
+        val logId = result.logId!!.toLong()
+        issueController.reportContentIssue(run.projectId, logId, run.ownerId, CaseContentReportRequest("기대 결과 수정"))
+        assertThat(attempts.get(run.projectId, run.ownerId, attempt.id).review).isNull()
+        reviewService.decideOutcome(run.qaRunId, logId, run.ownerId, "FAILED", null)
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVISION")
+
+        val revised = testCaseRepository.save(testCaseRepository.findById(run.failedCaseId)!!.copy(expectedValue = "수정 결과"))
+        val basis = kr.artel.orchestration.qa.review.RevisedCaseBasis(revised.scene, revised.precondition, revised.step, revised.expectedValue)
+        reviewService.decideOutcome(run.qaRunId, logId, run.ownerId, "PASSED", null, basis)
+
+        val reviewed = attempts.get(run.projectId, run.ownerId, attempt.id)
+        assertThat(reviewed.verdict).isEqualTo("FAILED")
+        assertThat(reviewed.review).isEqualTo("PASSED")
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+        val history = reliability.history(run.projectId, logId, run.ownerId, null)
+        assertThat(history.map { it.decision }).containsExactly("PASSED", "FAILED", "TC_CONTENT_ISSUE")
+        assertThat(history.first().revisedCase?.path("expected")?.asText()).isEqualTo("수정 결과")
+        assertThat(reliability.report(run.projectId, run.ownerId, null, null).overall.falsePositives).isZero()
     }
 
     @Test
