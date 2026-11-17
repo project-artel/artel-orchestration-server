@@ -112,7 +112,7 @@ class LlmUsageStatsIntegrationTest {
     @Test
     fun `every axis folds the same calls, so the four sums agree`(): Unit = runBlocking {
         val qaTryId = seedRun()
-        seedUsage("QA_RUN", qaTryId, input = 100, output = 10, cost = "0.001000")
+        seedUsage("QA_RUN", qaTryId, input = 100, output = 10, cost = "0.001000", cacheWrite = 70, estimated = true)
         seedUsage("QA_RUN", qaTryId, input = 200, output = 20, cost = "0.002000")
         seedUsage("EMBEDDING", projectId, input = 500, output = 0, cost = "0.000500", model = "openai/text-embedding-3-large")
         seedUsage("KNOWLEDGE_QUERY", projectId, input = 50, output = 5, cost = "0.000100")
@@ -122,6 +122,11 @@ class LlmUsageStatsIntegrationTest {
         assertThat(stats.total.calls).isEqualTo(4)
         assertThat(stats.total.inputTokens).isEqualTo(850)
         assertThat(stats.total.outputTokens).isEqualTo(35)
+        assertThat(stats.total.cacheWriteTokens).isEqualTo(70)
+        assertThat(stats.total.costEstimated).isTrue()
+        val run = statsService.qaRun(ownerId, qaTryId)!!.totals
+        assertThat(run.cacheWriteTokens).isEqualTo(70)
+        assertThat(run.costEstimated).isTrue()
         assertThat(stats.total.costUsd).isEqualByComparingTo(BigDecimal("0.003600"))
 
         // 축은 분할이 아니라 같은 집합을 네 번 접은 것이다. 하나라도 합이 어긋나면 그 축의
@@ -132,6 +137,7 @@ class LlmUsageStatsIntegrationTest {
         assertThat(stats.daily.sumOf { it.totals.calls }).isEqualTo(stats.total.calls)
         assertThat(stats.byService.sumOf { it.totals.inputTokens }).isEqualTo(850)
         assertThat(stats.daily.sumOf { it.totals.inputTokens }).isEqualTo(850)
+        assertThat(stats.daily.sumOf { it.totals.cacheWriteTokens }).isEqualTo(70)
     }
 
     @Test
@@ -469,7 +475,9 @@ class LlmUsageStatsIntegrationTest {
         cost: String?,
         model: String = "anthropic/sonnet-5",
         calledAt: Instant = now.minus(Duration.ofDays(1)),
-        createdAt: Instant = now
+        createdAt: Instant = now,
+        cacheWrite: Int = 0,
+        estimated: Boolean? = null
     ) {
         llmUsageRepository.save(
             LlmUsageEntity(
@@ -479,7 +487,9 @@ class LlmUsageStatsIntegrationTest {
                 model = model,
                 inputTokens = input,
                 outputTokens = output,
+                cacheWriteTokens = cacheWrite,
                 costUsd = cost?.let(::BigDecimal),
+                costEstimated = estimated ?: cost?.let { false },
                 latencyMs = 1_200,
                 calledAt = calledAt,
                 createdAt = createdAt

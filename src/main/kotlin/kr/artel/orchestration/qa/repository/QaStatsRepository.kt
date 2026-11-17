@@ -133,8 +133,10 @@ class QaStatsRepository(
                        SUM(u.input_tokens)           AS input_tokens,
                        SUM(u.output_tokens)          AS output_tokens,
                        SUM(u.cached_input_tokens)    AS cached_input_tokens,
+                       SUM(u.cache_write_tokens)    AS cache_write_tokens,
                        SUM(u.reasoning_tokens)       AS reasoning_tokens,
                        SUM(u.cost_usd)               AS cost_usd,
+                       COALESCE(BOOL_OR(u.cost_estimated), FALSE) AS cost_estimated,
                        COUNT(*)                      AS calls
                   FROM llm_usage u
                  WHERE u.service = 'QA_RUN'
@@ -184,10 +186,12 @@ class QaStatsRepository(
                    COALESCE(SUM(ru.input_tokens), 0)                          AS input_tokens,
                    COALESCE(SUM(ru.output_tokens), 0)                         AS output_tokens,
                    COALESCE(SUM(ru.cached_input_tokens), 0)                   AS cached_input_tokens,
+                   COALESCE(SUM(ru.cache_write_tokens), 0)                   AS cache_write_tokens,
                    COALESCE(SUM(ru.reasoning_tokens), 0)                      AS reasoning_tokens,
                    -- 0으로 뭉개지 않는다. 단가를 안 주는 provider가 있어 NULL은 "공짜"가 아니라
                    -- "모른다"이고, 둘을 같은 0으로 보여주면 비용 비교가 조용히 틀린다.
                    SUM(ru.cost_usd)                                           AS cost_usd,
+                   COALESCE(BOOL_OR(ru.cost_estimated), FALSE) AS cost_estimated,
                    COALESCE(SUM(ru.calls), 0)                                 AS llm_calls,
                    AVG(EXTRACT(EPOCH FROM (s.completed_at - s.started_at))::double precision * 1000)
                        FILTER (WHERE s.status = 'COMPLETED')                  AS avg_completed_duration_ms,
@@ -344,8 +348,10 @@ class QaStatsRepository(
         inputTokens = longAt("input_tokens"),
         outputTokens = longAt("output_tokens"),
         cachedInputTokens = longAt("cached_input_tokens"),
+        cacheWriteTokens = longAt("cache_write_tokens"),
         reasoningTokens = longAt("reasoning_tokens"),
         costUsd = get("cost_usd", BigDecimal::class.java),
+        costEstimated = get("cost_estimated", java.lang.Boolean::class.java)?.booleanValue() ?: false,
         llmCalls = longAt("llm_calls"),
         avgCompletedDurationMs = get("avg_completed_duration_ms", Double::class.javaObjectType),
         verdictKnown = longAt("verdict_known"),
@@ -407,8 +413,10 @@ data class QaStatsRow(
     val inputTokens: Long,
     val outputTokens: Long,
     val cachedInputTokens: Long,
+    val cacheWriteTokens: Long = 0,
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
+    val costEstimated: Boolean = false,
     val llmCalls: Long,
     val avgCompletedDurationMs: Double?,
     val verdictKnown: Long,

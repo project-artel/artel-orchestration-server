@@ -74,8 +74,10 @@ class LlmUsageStatsRepository(
                        u.input_tokens,
                        u.output_tokens,
                        u.cached_input_tokens,
+                       u.cache_write_tokens,
                        u.reasoning_tokens,
                        u.cost_usd,
+                       u.cost_estimated,
                        (u.called_at AT TIME ZONE :zone)::date AS called_on,
                        CASE u.service
                            WHEN 'QA_RUN'       THEN ts.project_id
@@ -122,10 +124,12 @@ class LlmUsageStatsRepository(
                    COALESCE(SUM(v.input_tokens), 0)             AS input_tokens,
                    COALESCE(SUM(v.output_tokens), 0)            AS output_tokens,
                    COALESCE(SUM(v.cached_input_tokens), 0)      AS cached_input_tokens,
+                   COALESCE(SUM(v.cache_write_tokens), 0)      AS cache_write_tokens,
                    COALESCE(SUM(v.reasoning_tokens), 0)         AS reasoning_tokens,
                    -- 0으로 뭉개지 않는다. 단가를 안 주는 provider가 있어 NULL은 "공짜"가 아니라
                    -- "모른다"이고, 둘을 같은 0으로 보여주면 비용 비교가 조용히 틀린다(V24 주석).
                    SUM(v.cost_usd)                              AS cost_usd,
+                   COALESCE(BOOL_OR(v.cost_estimated), FALSE) AS cost_estimated,
                    COUNT(*)                                     AS calls,
                    -- 단가를 아는 호출 수. cost_usd 합계가 몇 건 위에 얹힌 값인지를 같은 줄에 실어,
                    -- 절반이 단가 미상인 합계를 전체 지출로 읽지 못하게 한다.
@@ -241,8 +245,10 @@ class LlmUsageStatsRepository(
                    COALESCE(SUM(u.input_tokens), 0)            AS input_tokens,
                    COALESCE(SUM(u.output_tokens), 0)           AS output_tokens,
                    COALESCE(SUM(u.cached_input_tokens), 0)     AS cached_input_tokens,
+                   COALESCE(SUM(u.cache_write_tokens), 0)     AS cache_write_tokens,
                    COALESCE(SUM(u.reasoning_tokens), 0)        AS reasoning_tokens,
                    SUM(u.cost_usd)                             AS cost_usd,
+                   COALESCE(BOOL_OR(u.cost_estimated), FALSE) AS cost_estimated,
                    COUNT(u.id)                                 AS calls,
                    COUNT(u.cost_usd)                           AS priced_calls
               FROM qa_try qt
@@ -284,8 +290,10 @@ class LlmUsageStatsRepository(
         inputTokens = longAt("input_tokens"),
         outputTokens = longAt("output_tokens"),
         cachedInputTokens = longAt("cached_input_tokens"),
+        cacheWriteTokens = longAt("cache_write_tokens"),
         reasoningTokens = longAt("reasoning_tokens"),
         costUsd = get("cost_usd", BigDecimal::class.java),
+        costEstimated = get("cost_estimated", java.lang.Boolean::class.java)?.booleanValue() ?: false,
         calls = longAt("calls"),
         pricedCalls = longAt("priced_calls")
     )
@@ -303,8 +311,10 @@ class LlmUsageStatsRepository(
         inputTokens = longAt("input_tokens"),
         outputTokens = longAt("output_tokens"),
         cachedInputTokens = longAt("cached_input_tokens"),
+        cacheWriteTokens = longAt("cache_write_tokens"),
         reasoningTokens = longAt("reasoning_tokens"),
         costUsd = get("cost_usd", BigDecimal::class.java),
+        costEstimated = get("cost_estimated", java.lang.Boolean::class.java)?.booleanValue() ?: false,
         calls = longAt("calls"),
         pricedCalls = longAt("priced_calls")
     )
@@ -372,8 +382,10 @@ data class LlmUsageStatsRow(
     val inputTokens: Long,
     val outputTokens: Long,
     val cachedInputTokens: Long,
+    val cacheWriteTokens: Long = 0,
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
+    val costEstimated: Boolean = false,
     val calls: Long,
     val pricedCalls: Long
 )
@@ -411,8 +423,10 @@ data class QaRunUsageRow(
     val inputTokens: Long,
     val outputTokens: Long,
     val cachedInputTokens: Long,
+    val cacheWriteTokens: Long = 0,
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
+    val costEstimated: Boolean = false,
     val calls: Long,
     val pricedCalls: Long
 )
