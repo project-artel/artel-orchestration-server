@@ -100,7 +100,7 @@ class QaVerdictReviewService(
     suspend fun decide(qaRunId: Long, logId: Long, appUserId: Long, passed: Boolean, note: String?): QaVerdictReviewEntity =
         decideOutcome(qaRunId, logId, appUserId, if (passed) PASSED else FAILED, note)
 
-    suspend fun decideOutcome(qaRunId: Long?, logId: Long, appUserId: Long, decision: String, note: String?): QaVerdictReviewEntity {
+    suspend fun decideOutcome(qaRunId: Long?, logId: Long, appUserId: Long, decision: String, note: String?, revisedCase: RevisedCaseBasis? = null): QaVerdictReviewEntity {
         if (decision !in setOf(PASSED, FAILED, INCONCLUSIVE, TC_CONTENT_ISSUE)) throw BadRequestException("올바른 평가 결과를 선택해 주세요.")
         if (note != null && note.length > MAX_NOTE) throw BadRequestException("평가 이유는 ${MAX_NOTE}자 이하여야 합니다.")
         val result = transactions.executeAndAwait {
@@ -117,6 +117,22 @@ class QaVerdictReviewService(
         val existingCaseId = caseId?.let { id -> database.sql("SELECT id FROM test_case WHERE id = :id")
             .bind("id", id).map { record, _ -> record.get("id", java.lang.Long::class.java)!!.toLong() }.awaitSingleOrNull() }
         val trimmed = note?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_NOTE)
+        val revisedSnapshot = revisedCase?.let {
+            database.sql("""
+                SELECT qa_case_full_content(to_jsonb(c))::text AS snapshot
+                FROM qa_case_attempt a JOIN test_case c ON c.id = a.test_case_id AND c.project_id = a.project_id
+                JOIN qa_case_content_review cr ON cr.test_case_id = c.id AND cr.source_log_id = a.qa_log_id
+                WHERE a.qa_log_id = :log AND cr.revised_at IS NOT NULL
+                  AND c.scene = :scene AND c.step = :step AND c.expected_value = :expected
+                  AND c.precondition IS NOT DISTINCT FROM CAST(:precondition AS text)
+                  AND NOT qa_case_snapshot_matches(a.case_snapshot, to_jsonb(c))
+                FOR UPDATE OF c
+            """).bind("log", logId).bind("scene", it.scene).bind("step", it.step).bind("expected", it.expected)
+                .let { query -> it.precondition?.let { value -> query.bind("precondition", value) }
+                    ?: query.bindNull("precondition", String::class.java) }
+                .map { record, _ -> record.get("snapshot", String::class.java)!! }.awaitSingleOrNull()
+                ?: throw BadRequestException("현재 Test Case를 다시 확인해 주세요.")
+        }
         reviews.decide(
             qaLogId = logId,
             qaRunId = qaTry.qaRunId,
@@ -127,6 +143,7 @@ class QaVerdictReviewService(
             note = trimmed,
             decidedBy = appUserId,
             decidedAt = Instant.now(clock),
+            revisedCaseSnapshot = revisedSnapshot,
         )
         // TC 판정은 사람 결정을 따른다. 판정 기록은 AI 판정과 같은 STATUS 행을 가리킨다.
         val effective = when (decision) {
@@ -134,7 +151,7 @@ class QaVerdictReviewService(
             FAILED -> false
             else -> when (payload.path("status").asText()) { "COMPLETED" -> true; "FAILED" -> false; else -> null }
         }
-        if (caseId != null && decision != TC_CONTENT_ISSUE) caseVerdicts.recordStepVerdict(qaTry, caseId, effective, logId, publish = false)
+        if (caseId != null && decision != TC_CONTENT_ISSUE && revisedSnapshot == null) caseVerdicts.recordStepVerdict(qaTry, caseId, effective, logId, publish = false)
         reviews.findById(logId) ?: throw NotFoundException()
         }
         val projectId = database.sql("SELECT s.project_id FROM qa_try t JOIN test_scenario s ON s.id = t.test_scenario_id WHERE t.id = :try")

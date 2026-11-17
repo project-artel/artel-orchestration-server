@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa.review
 
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
 import org.springframework.data.annotation.Id
 import org.springframework.data.r2dbc.repository.Modifying
@@ -27,6 +28,7 @@ data class QaVerdictReviewEntity(
     @Column("decided_by") val decidedBy: Long?,
     @Column("decided_at") val decidedAt: Instant?,
     @Column("created_at") val createdAt: Instant,
+    @Column("revised_case_snapshot") val revisedCaseSnapshot: Json? = null,
 )
 
 /** TC 하나에 사람이 정한 판정 한 건(ARTEL-1256). 다음 QA 가 같은 TC 를 판정할 때 참고로 넘긴다. */
@@ -62,11 +64,12 @@ interface QaVerdictReviewRepository : CoroutineCrudRepository<QaVerdictReviewEnt
     @Query(
         """
         INSERT INTO qa_verdict_review (qa_log_id, qa_run_id, qa_try_id, test_case_id, flagged, ai_passed,
-                                       decision, note, decided_by, decided_at)
-        VALUES (:qaLogId, :qaRunId, :qaTryId, :testCaseId, FALSE, :aiPassed, :decision, :note, :decidedBy, :decidedAt)
+                                       decision, note, decided_by, decided_at, revised_case_snapshot)
+        VALUES (:qaLogId, :qaRunId, :qaTryId, :testCaseId, FALSE, :aiPassed, :decision, :note, :decidedBy, :decidedAt, CAST(:revisedCaseSnapshot AS jsonb))
         ON CONFLICT (qa_log_id) DO UPDATE
            SET decision = EXCLUDED.decision, note = EXCLUDED.note,
-               decided_by = EXCLUDED.decided_by, decided_at = EXCLUDED.decided_at
+               decided_by = EXCLUDED.decided_by, decided_at = EXCLUDED.decided_at,
+               revised_case_snapshot = EXCLUDED.revised_case_snapshot
         """
     )
     suspend fun decide(
@@ -79,6 +82,7 @@ interface QaVerdictReviewRepository : CoroutineCrudRepository<QaVerdictReviewEnt
         note: String?,
         decidedBy: Long,
         decidedAt: Instant,
+        revisedCaseSnapshot: String?,
     ): Int
 
     fun findByQaRunId(qaRunId: Long): Flow<QaVerdictReviewEntity>
@@ -105,7 +109,7 @@ interface QaVerdictReviewRepository : CoroutineCrudRepository<QaVerdictReviewEnt
                   LEFT JOIN test_case c ON c.id = r.test_case_id
                   LEFT JOIN qa_run run ON run.id = r.qa_run_id
                   LEFT JOIN game_build gb ON gb.id = run.game_build_id
-                 WHERE r.decision IS NOT NULL AND r.test_case_id IN (:testCaseIds)
+                 WHERE r.decision IS NOT NULL AND r.revised_case_snapshot IS NULL AND r.test_case_id IN (:testCaseIds)
                ) ranked
          WHERE rank <= :perCase
          ORDER BY test_case_id, decided_at DESC

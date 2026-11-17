@@ -3,6 +3,8 @@ package kr.artel.orchestration.qa.review
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.common.error.BadRequestException
+import org.springframework.r2dbc.core.awaitSingle
 import kr.artel.orchestration.project.service.ProjectAccessService
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.r2dbc.core.awaitSingleOrNull
@@ -10,7 +12,9 @@ import org.springframework.r2dbc.core.flow
 import org.springframework.web.bind.annotation.*
 import java.time.Instant
 
-data class CaseReviewRequest(val decision: String, val note: String? = null)
+data class RevisedCaseBasis(val scene: String, val precondition: String?, val step: String, val expected: String)
+data class CaseReviewRequest(val decision: String, val note: String? = null, val revisedCase: RevisedCaseBasis? = null)
+data class CaseContentReportRequest(val note: String? = null)
 data class CaseFailureOccurrence(val attemptId: String, val testCaseId: String, val qaTryId: String,
     val qaRunId: String?, val logId: String?, val verdict: String, val review: String?,
     val validFailure: Boolean, val falsePositive: Boolean, val finishedAt: Instant?)
@@ -25,12 +29,30 @@ class QaCaseIssueController(private val database: DatabaseClient, private val ac
     @PutMapping("/verdicts/{logId}/review")
     suspend fun review(@PathVariable projectId: Long, @PathVariable logId: Long, @CurrentUserId userId: Long,
         @RequestBody request: CaseReviewRequest): QaVerdictReviewEntity {
+        requireVisibleLog(projectId, logId, userId)
+        return reviews.decideOutcome(null, logId, userId, request.decision, request.note, request.revisedCase)
+    }
+
+    @PutMapping("/verdicts/{logId}/content-issue")
+    suspend fun reportContentIssue(@PathVariable projectId: Long, @PathVariable logId: Long, @CurrentUserId userId: Long,
+        @RequestBody request: CaseContentReportRequest): Map<String, Boolean> {
+        requireVisibleLog(projectId, logId, userId)
+        val note = request.note?.trim()
+        if (note != null && note.length > 2000) throw BadRequestException("수정 이유는 2000자 이하여야 합니다.")
+        val reported = database.sql("SELECT report_qa_case_content(:logId, :note, :userId) AS reported").bind("logId", logId).bind("userId", userId)
+            .let { query -> note?.let { query.bind("note", it) } ?: query.bindNull("note", String::class.java) }
+            .map { row, _ -> row.get("reported", java.lang.Boolean::class.java)!!.booleanValue() }.awaitSingle()
+        if (!reported) throw BadRequestException("실행 당시 Test Case와 현재 내용을 다시 확인해 주세요.")
+        return mapOf("reported" to true)
+    }
+
+    private suspend fun requireVisibleLog(projectId: Long, logId: Long, userId: Long) {
         access.requireMember(projectId, userId)
         database.sql("""SELECT l.id FROM qa_log l JOIN qa_try t ON t.id = l.qa_try_id
             JOIN test_scenario s ON s.id = t.test_scenario_id WHERE l.id = :id AND s.project_id = :project""")
             .bind("id", logId).bind("project", projectId).map { row, _ -> row.get("id")!! }.awaitSingleOrNull()
             ?: throw NotFoundException()
-        return reviews.decideOutcome(null, logId, userId, request.decision, request.note)
+
     }
 
     @GetMapping("/issues/{issueId}")
