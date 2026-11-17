@@ -99,8 +99,34 @@ class QaReadingsTest {
                 assertThat(sent["type"].asText()).isEqualTo("ACTION")
                 val action = sent["actions"][0]
                 assertThat(action["method"].asText()).isEqualTo("start_readings")
-                // 파라미터는 없다. 무엇을 볼지는 근거가 이미 정했다.
-                assertThat(action["params"]).isEmpty()
+                // 이미 구독 중이어도 새 QA가 현재 whole을 받도록 명시적으로 요청한다.
+                assertThat(action["params"]).hasSize(1)
+                assertThat(action["params"][0]["force"].asBoolean()).isTrue()
+            }
+            .thenCancel()
+            .verify(Duration.ofSeconds(5))
+
+        release(instanceId)
+    }
+
+    @Test
+    fun `반복 QA 시작도 매번 전체 pulse를 요청한다`(): Unit = runBlocking {
+        val instanceId = newInstance()
+        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), mockSession()))
+
+        readings.start(instanceId)
+        readings.start(instanceId)
+
+        StepVerifier.create(outbound)
+            .assertNext { json ->
+                val action = objectMapper.readTree(json)["actions"][0]
+                assertThat(action["method"].asText()).isEqualTo("start_readings")
+                assertThat(action["params"][0]["force"].asBoolean()).isTrue()
+            }
+            .assertNext { json ->
+                val action = objectMapper.readTree(json)["actions"][0]
+                assertThat(action["method"].asText()).isEqualTo("start_readings")
+                assertThat(action["params"][0]["force"].asBoolean()).isTrue()
             }
             .thenCancel()
             .verify(Duration.ofSeconds(5))
