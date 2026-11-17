@@ -57,7 +57,8 @@ class LlmUsageStatsService(
         projectId: Long?,
         from: Instant?,
         to: Instant?,
-        zone: String?
+        zone: String?,
+        membersOnly: Boolean = false
     ): LlmUsageStatsResponse {
         val window = window(from, to)
         val zoneId = parseZone(zone)
@@ -65,7 +66,8 @@ class LlmUsageStatsService(
         val rows = statsRepository.aggregate(
             userId = userId,
             projectId = projectId,
-            seesAllProjects = platformAccessService.seesAllProjects(userId),
+            // `membersOnly` 는 계정 화면처럼 "내" 사용량을 보이는 자리가 쓴다. 등급이 여는 전 프로젝트는 관리 화면의 몫이다.
+            seesAllProjects = !membersOnly && platformAccessService.seesAllProjects(userId),
             from = window.first,
             to = window.second,
             zone = zoneId.id
@@ -99,7 +101,8 @@ class LlmUsageStatsService(
                 },
             daily = rows.filter { it.groupingMask == LlmUsageGroupingSet.DAY }
                 .mapNotNull { row -> row.calledOn?.let { LlmUsageDailyCell(it, row.toTotals()) } },
-            unattributedCalls = statsRepository.countUnattributedCalls(window.first, window.second)
+            // 프로젝트에 붙지 않은 호출은 배포 전체의 개수라, 내 프로젝트만 보는 범위에는 싣지 않는다.
+            unattributedCalls = if (membersOnly) 0L else statsRepository.countUnattributedCalls(window.first, window.second)
         )
     }
 
