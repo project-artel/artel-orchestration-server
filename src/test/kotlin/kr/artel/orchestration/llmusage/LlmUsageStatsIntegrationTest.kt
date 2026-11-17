@@ -218,6 +218,23 @@ class LlmUsageStatsIntegrationTest {
         assertThat(all.total.costUsd).isEqualByComparingTo(BigDecimal("0.010000"))
     }
 
+    /**
+     * 계정 화면의 "API 관리" 는 `member` 범위로 묻는다. 거기서는 개발자라도 참여하지 않은 프로젝트의 이름과 비용이
+     * 나오지 않는다 — 바로 위의 전 프로젝트 합산은 관리 화면의 몫이다.
+     */
+    @Test
+    fun `a developer's own usage view shows only projects they belong to`(): Unit = runBlocking {
+        seedUsage("KNOWLEDGE_QUERY", projectId, input = 100, output = 10, cost = "0.001000")
+        seedUsage("KNOWLEDGE_QUERY", otherProjectId, input = 900, output = 90, cost = "0.009000")
+        val developerId = promotedDeveloper()
+
+        val mine = statsService.stats(developerId, null, windowStart, windowEnd, "UTC", membersOnly = true)
+
+        assertThat(mine.total.inputTokens).isEqualTo(0)
+        assertThat(mine.byProject).isEmpty()
+        assertThat(mine.unattributedCalls).isEqualTo(0)
+    }
+
     @Test
     fun `a call whose target is gone is counted apart, never as free`(): Unit = runBlocking {
         seedUsage("KNOWLEDGE_QUERY", projectId, input = 100, output = 10, cost = "0.001000")
