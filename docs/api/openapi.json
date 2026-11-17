@@ -3528,6 +3528,29 @@
         }
       }
     },
+    "/wishlist": {
+      "post": {
+        "tags": [
+          "wishlist-signup-controller"
+        ],
+        "operationId": "joinWishlist",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WishlistSignupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/telemetry/reports": {
       "post": {
         "tags": [
@@ -16240,6 +16263,23 @@
             "type": "boolean"
           },
           "error": {
+            "type": "string"
+          }
+        }
+      },
+      "WishlistSignupRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "consent": {
+            "type": "boolean"
+          },
+          "website": {
             "type": "string"
           }
         }

@@ -207,6 +207,33 @@ Any other route is 403 `mcp_route_forbidden`, whatever the scope. A listed route
 | `artel.mcp.handoff.private-key` | `ARTEL_MCP_HANDOFF_PRIVATE_KEY` | blank | RSA PKCS#8 PEM, at least 2048 bits (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`). In a one-line variable write line breaks as `\n`. A key that cannot be read stops startup; the error never contains the key |
 | `artel.mcp.handoff.generate-dev-key` | `ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY` | `false` | with no `private-key`, make a new key on every start. Local use only: a restart invalidates handoffs in flight, and each replica would sign with its own key |
 
+### Wishlist signup
+
+The onboarding site (artel.kr) stores a visitor's email with `POST /wishlist`. No session is needed. The path sits outside `/api` because it is unauthenticated (`.agents/docs/project.md` rule 2), like `/telemetry/reports`.
+
+| Request | Response |
+|---|---|
+| `POST /wishlist` `{email, locale, consent, website}` | 204, no body |
+
+- `email` is trimmed and lower-cased before it is stored. It must be at most 254 characters, contain one `@`, and have a domain with at least one dot whose last label is two or more ASCII letters: `a@b.co` is accepted, `o@s.s` and `owner@localhost` are refused. This is stricter than the contact email check of `EmailVerificationService`, on purpose.
+- `locale` is `ko`, `en`, or omitted (stored as null).
+- `consent` must be `true`. The server stores the time it received the request as `consented_at`.
+- `website` is a honeypot the site keeps hidden from people. When it is non-blank after trimming, the request is 204 and nothing is stored or validated. It still counts toward the rate limit.
+- `verified_at` is always null for now. A later double opt-in will set it.
+- An email that is already stored is 204 as well, and the row is not changed: `locale` and `consented_at` stay as first sent. The response never tells whether an address was already on the list.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_email` | `email` missing, blank, longer than 254 characters, or not an address |
+| 400 | `consent_required` | `consent` missing or not `true` (checked after `email`) |
+| 400 | `invalid_locale` | `locale` present and not `ko` or `en` (checked after `consent`) |
+| 400 | `error` | the body is not JSON (the framework decoding failure, mapped by `ApiExceptionHandler.handleStatus`) |
+| 429 | `too_many_requests` | more than 30 requests in one hour from one client address, with `Retry-After` in seconds |
+
+The error body is the shared `{code, message, fields}` envelope. The client address is the leftmost `X-Forwarded-For` value, as for `POST /api/auth/login`, and it is counted in memory only, never stored. Every request counts, including ones for an address already on the list and honeypot requests. The limit is `artel.wishlist.requests-per-window` and `artel.wishlist.window` (defaults `30` and `1h`).
+
+The route has its own security chain (`SecurityConfig.wishlistSecurityWebFilterChain`) that reads neither the session cookie nor a bearer token, so a visitor whose session cookie for this server has expired still gets 204 instead of 401. CORS is the same as every other route: the origins in `ARTEL_ALLOWED_ORIGINS` plus `ARTEL_HOME_URL`, with credentials allowed, so the site can call it with or without `credentials: 'include'`.
+
 ## Verification
 
 ```bash
