@@ -101,6 +101,8 @@ class QaVerdictService(
                 reportingUnit = if (qaTry.agentArch == "v28-case-evaluation" || qaTry.runConfig.asString().contains("\"report_test_case\"")) "TEST_CASE" else "STEP",
                 executionMode = scenario?.executionMode?.name ?: "ORDERED",
                 status = qaTry.status,
+                casesPassed = qaTry.casesPassed,
+                casesTotal = qaTry.casesTotal,
                 model = qaTry.model,
                 startedAt = qaTry.startedAt,
                 completedAt = qaTry.completedAt,

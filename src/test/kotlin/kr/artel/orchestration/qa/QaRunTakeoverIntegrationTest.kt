@@ -179,7 +179,7 @@ class QaRunTakeoverIntegrationTest {
 
         // 이전 런은 취소로 닫히고, 그 세션은 끊긴다.
         assertThat(qaRunRepository.findById(seed.runId)!!.status).isEqualTo("CANCELLED")
-        assertThat(qaTryRepository.findById(seed.pendingTryId)!!.status).isEqualTo("FAILED")
+        assertThat(qaTryRepository.findById(seed.pendingTryId)!!.status).isEqualTo("CANCELLED")
         assertThat(agentPort.closed).contains(seed.sessionId)
         // 새 런이 같은 인스턴스에서 실행 중이고, 그 인스턴스의 활성 런은 이제 새 것 하나뿐이다.
         assertThat(started.status).isEqualTo("RUNNING")

@@ -224,7 +224,14 @@ data class QaTryResponse(
      * 못한 시도는 `not_started` 다.
      */
     val stop: QaStopResponse? = null,
-    val inputMode: String = "virtual"
+    val inputMode: String = "virtual",
+    /**
+     * 이 시나리오에서 통과한 TC 수와 판정한 TC 수. 화면이 TC 하나만 실패해도 시나리오 전체를 실패로 보이지 않고
+     * `통과/전체` 와 그 비율로 보이게 하는 재료다. null 이면 모른다(진행 중이거나 판정 요약이 오지 않았다).
+     * TC 가 없는 시나리오는 [casesTotal] 이 0 이다.
+     */
+    val casesPassed: Int? = null,
+    val casesTotal: Int? = null
 )
 
 /** 미판정으로 끝난 까닭(ARTEL-1371). [provider] 는 `anthropic` · `openai` · `openrouter` 다. 카탈로그에 남은 `bedrock/` model 을 고른 런이면 `bedrock` 이다. */

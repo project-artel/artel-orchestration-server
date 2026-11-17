@@ -192,6 +192,36 @@ class QaRunUndecidedIntegrationTest {
         assertThat(cancelled.discardedAt).isNull()
     }
 
+    /**
+     * 사용자가 런을 취소하면 돌던 시나리오만이 아니라 아직 차례가 오지 않은 시나리오도 취소로 끝난다. 전에는 뒤의
+     * 시나리오가 FAILED 로 남아(런 31: 181 CANCELLED, 182 · 183 · 184 FAILED) 돌지도 않은 시나리오가 "실패" 로 보였다.
+     * 이미 끝난 시나리오는 제 결과를 지킨다.
+     */
+    @Test
+    fun `사용자가 실행 중인 런을 취소하면 아직 돌지 않은 시나리오도 취소로 끝난다`(): Unit = runBlocking {
+        val run = runningRun(scenarios = 4)
+        router.handle(passedFrame(run.tryIds[0]))
+        router.handle(logFrame(run.tryIds[1], "scenario 2 turn"))
+        assertThat(qaTryRepository.findById(run.tryIds[1])!!.status).isEqualTo("RUNNING")
+
+        service.cancelRun(run.runId, run.ownerId)
+
+        assertThat(qaTryRepository.findById(run.tryIds[0])!!.status).isEqualTo("COMPLETED")
+        for (tryId in run.tryIds.drop(1)) {
+            val ended = qaTryRepository.findById(tryId)!!
+            assertThat(ended.status).isEqualTo("CANCELLED")
+            assertThat(ended.completedAt).isNotNull()
+            // 모델 API 오류로 돌지 않은 시나리오(`not_started`)와 섞지 않는다. 취소에는 멈춘 까닭 코드가 없다.
+            assertThat(ended.stopCode).isNull()
+        }
+        val cancelled = qaRunRepository.findById(run.runId)!!
+        assertThat(cancelled.status).isEqualTo("CANCELLED")
+        assertThat(cancelled.stopCode).isNull()
+        assertThat(qaRunRepository.findActiveByGameInstanceId(run.instanceId)).isNull()
+        assertThat(service.getRun(run.runId, run.ownerId)!!.tries.map { it.status })
+            .containsExactly("COMPLETED", "CANCELLED", "CANCELLED", "CANCELLED")
+    }
+
     // ----------------------------------------------------------------- helpers
 
     private data class RunningRun(
