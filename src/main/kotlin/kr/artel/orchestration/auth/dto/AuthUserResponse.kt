@@ -39,7 +39,12 @@ data class AuthUserResponse(
      * 임시 비밀번호로 들어온 계정이면 true 다. 이 동안 서버는 이 경로와 `POST /api/auth/password` 말고는
      * 전부 403 `password_change_required` 로 답한다. 화면은 이 값을 보고 비밀번호 변경 화면으로 보낸다.
      */
-    val mustChangePassword: Boolean = false
+    val mustChangePassword: Boolean = false,
+    /**
+     * 시작 튜토리얼을 마치거나 건너뛴 시각(ISO-8601). null 이면 아직 보지 않은 사용자이고, 화면은 처음
+     * 들어올 때 튜토리얼을 자동으로 띄운다. 본 것으로 적는 경로는 `POST /api/auth/me/tutorial-seen`.
+     */
+    val tutorialSeenAt: java.time.Instant? = null
 )
 
 /** `PUT /api/auth/me/locale` 요청 본문. */

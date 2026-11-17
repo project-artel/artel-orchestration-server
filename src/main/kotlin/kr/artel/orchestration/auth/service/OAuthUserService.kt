@@ -222,7 +222,8 @@ class OAuthUserService(
             userTag = appUser.userTag,
             emailVerifiedAt = appUser.emailVerifiedAt,
             identities = identities,
-            disabled = appUser.disabled
+            disabled = appUser.disabled,
+            tutorialSeenAt = appUser.tutorialSeenAt
         )
     }
 
@@ -233,6 +234,17 @@ class OAuthUserService(
     suspend fun updateLocale(userId: Long, locale: String): AppUserEntity? {
         val appUser = appUserRepository.findById(userId) ?: return null
         return appUserRepository.save(appUser.copy(locale = locale, updatedAt = Instant.now(clock)))
+    }
+
+    /**
+     * 시작 튜토리얼을 본 것으로 적는다. 이미 적혀 있으면 처음 시각을 그대로 둔다 — 다시 보기로 끝까지 본
+     * 것은 "처음 본 때"를 바꾸지 않는다. 세션이 가리키는 사용자가 더 이상 없으면 null이다.
+     */
+    suspend fun markTutorialSeen(userId: Long): AppUserEntity? {
+        val appUser = appUserRepository.findById(userId) ?: return null
+        if (appUser.tutorialSeenAt != null) return appUser
+        val now = Instant.now(clock)
+        return appUserRepository.save(appUser.copy(tutorialSeenAt = now, updatedAt = now))
     }
 
     /**

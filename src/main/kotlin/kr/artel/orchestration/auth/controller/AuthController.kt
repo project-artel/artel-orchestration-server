@@ -91,6 +91,20 @@ class AuthController(
         return authUserResponseReader.read(session.userId) ?: throw UnauthorizedException()
     }
 
+    /**
+     * 시작 튜토리얼을 본 것으로 적는다(ARTEL-1462). 끝까지 봤든 건너뛰었든 같은 요청이다. 이미 적혀 있으면
+     * 아무것도 바꾸지 않으므로 여러 번 불러도 된다.
+     */
+    @PostMapping("/me/tutorial-seen")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun markTutorialSeen(@AuthenticationPrincipal jwt: Jwt) {
+        val session = sessionUserResolver.resolve(jwt)
+            ?: throw UnauthorizedException()
+        // me()와 같은 이유: 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
+        oauthUserService.markTutorialSeen(session.userId)
+            ?: throw UnauthorizedException()
+    }
+
     @PutMapping("/me/locale")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     suspend fun updateLocale(
