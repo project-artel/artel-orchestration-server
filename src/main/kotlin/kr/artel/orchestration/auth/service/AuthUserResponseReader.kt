@@ -38,7 +38,8 @@ class AuthUserResponseReader(
                 )
             },
             hasPassword = credential != null,
-            mustChangePassword = credential?.mustChangePassword == true
+            mustChangePassword = credential?.mustChangePassword == true,
+            tutorialSeenAt = profile.tutorialSeenAt
         )
     }
 }
