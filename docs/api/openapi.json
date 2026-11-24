@@ -10134,6 +10134,26 @@
         }
       }
     },
+    "/api/qa-arch-options": {
+      "get": {
+        "tags": [
+          "qa-arch-options-controller"
+        ],
+        "operationId": "qaArchOptions",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/tracker/github/repositories": {
       "get": {
         "tags": [
